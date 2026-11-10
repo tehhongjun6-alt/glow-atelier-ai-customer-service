@@ -134,6 +134,9 @@ export default function HandoffPanel({ refreshKey }: { refreshKey: number }) {
 
   return (
     <div className="handoffs">
+      <p className="demo-note" role="note">
+        示范用后台：为了让大家体验，这里不需要登录，任何人都能接受或处理工单。正式上线时，只有登录的门市同事才能操作。
+      </p>
       <div className="filters" role="group" aria-label="按状态筛选">
         {FILTERS.map((f) => (
           <button key={f.id} className={filter === f.id ? "filter is-active" : "filter"} onClick={() => setFilter(f.id)}>

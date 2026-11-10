@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, type TraceStep } from "../api";
+import { api, ApiError, type TraceStep } from "../api";
 
 type Message =
   | { role: "customer"; text: string }
@@ -140,7 +140,11 @@ export default function ChatPanel({
       setMessages((m) => [...m, { role: "ai", text: res.answer, trace: res.trace, tokens: res.tokens }]);
       onToolsUsed(res.trace.map((s) => s.tool));
     } catch (err) {
-      setMessages((m) => [...m, { role: "error", text: `没有连上后端：${(err as Error).message}。请确认 backend 的 API 正在运行。` }]);
+      const text =
+        err instanceof ApiError
+          ? err.message // 后端说明的原因，例如"讯息发得太快了，请等 30 秒再试"
+          : `没有连上后端：${(err as Error).message}。请确认 backend 的 API 正在运行。`;
+      setMessages((m) => [...m, { role: "error", text }]);
     } finally {
       setBusy(false);
     }

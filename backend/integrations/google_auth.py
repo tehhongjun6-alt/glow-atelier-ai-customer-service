@@ -13,6 +13,7 @@ Google Calendar 和 Gmail 都要"代表某个 Google 账号"操作，所以要�
 
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -27,7 +28,19 @@ SCOPES = [
 ]
 
 
-def get_credentials():
+RELOGIN_HINT = "请删除 backend/secrets/token.json，再运行 python -m integrations.google_auth 重新登录。"
+
+
+class GoogleAuthError(RuntimeError):
+    """Google 授权有问题（没登录过、过期、被撤销）。服务器上不能自动登录，只能报错请人处理。"""
+
+
+def get_credentials(interactive=False):
+    """取得 Google 授权。
+
+    interactive=False（服务器、API、自动回信用）：授权有问题就直接报错，不会卡住等人登录。
+    interactive=True（在终端手动运行时）：授权有问题就打开浏览器重新登录。
+    """
     creds = None
     if TOKEN_FILE.exists():
         creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
@@ -36,8 +49,17 @@ def get_credentials():
         return creds
 
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())       # 过期了：用 refresh token 自动换新的
-    else:
+        try:
+            creds.refresh(Request())       # 过期了：用 refresh token 自动换新的
+        except RefreshError as error:
+            # 最常见：app 还在"测试"状态，refresh token 7 天就失效（invalid_grant）
+            if not interactive:
+                raise GoogleAuthError(f"Google 授权已过期或被撤销（{error}）。{RELOGIN_HINT}") from error
+            creds = None
+
+    if not creds or not creds.valid:
+        if not interactive:
+            raise GoogleAuthError(f"还没有有效的 Google 授权。{RELOGIN_HINT}")
         if not CLIENT_FILE.exists():
             raise FileNotFoundError(
                 f"找不到 {CLIENT_FILE}。请先在 Google Cloud 建立 OAuth 客户端（Desktop app），"
@@ -51,6 +73,15 @@ def get_credentials():
     return creds
 
 
+def status():
+    """给 /api/health 用：Google 授权现在能不能用。"""
+    try:
+        get_credentials()
+        return {"ok": True}
+    except Exception as error:
+        return {"ok": False, "error": str(error)}
+
+
 if __name__ == "__main__":
-    get_credentials()
+    get_credentials(interactive=True)
     print(f"✅ 登录成功，授权已存到 {TOKEN_FILE}")

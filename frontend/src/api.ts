@@ -49,13 +49,20 @@ export type Handoff = {
   conversation?: { role: "customer" | "ai"; text: string }[];
 };
 
+// 后端有回应、但拒绝了请求（例如 429 使用次数超过上限）。和"连不上后端"分开处理。
+export class ApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {
     headers: { "Content-Type": "application/json" },
     ...init,
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail ?? `请求失败（${res.status}）`);
+  if (!res.ok) throw new ApiError(body.detail ?? `请求失败（${res.status}）`, res.status);
   return body as T;
 }
 

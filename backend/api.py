@@ -22,13 +22,15 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from agent.agent import MODEL, CustomerServiceAgent
 from booking import bookings, rules
 from handoff import handoffs
+from integrations import google_auth
+from ratelimit import chat_limiter, client_ip
 from rag.chunker import chunk_file
 from rag.store import supabase
 
@@ -68,10 +70,13 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/api/chat")
-def chat(req: ChatRequest):
+def chat(req: ChatRequest, request: Request):
     message = req.message.strip()
     if not message:
         raise HTTPException(400, "讯息不能是空的")
+    limited = chat_limiter.check(client_ip(request))   # 保护 Gemini 免费额度
+    if limited:
+        raise HTTPException(429, limited)
     session_id = req.session_id or uuid.uuid4().hex
     result = _get_agent(session_id).chat(message[:2000])
     return {"session_id": session_id, "model": MODEL, **result}
@@ -154,4 +159,9 @@ def resolve_handoff(ticket_code: str, req: ResolveRequest):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "model": MODEL, "time": datetime.now(rules.TIMEZONE).isoformat()}
+    return {
+        "ok": True,
+        "model": MODEL,
+        "time": datetime.now(rules.TIMEZONE).isoformat(),
+        "google": google_auth.status(),   # 授权过期时，这里会写出原因和修法
+    }
