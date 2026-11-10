@@ -1,0 +1,36 @@
+{
+  "_说明": "检索评估题库。dev = 开发用，可以看结果来调整；holdout = 保留测试集，只用来最后验证，不能看了结果再改系统。expected = 能回答这题的块标题（任何一个出现就算找到）；expected 为空 = 资料里没有答案的题。题目故意不用 2.6 调整时用过的 5 题。",
+  "questions": [
+    {"id": "d01", "split": "dev", "question": "你们几点关门？", "expected": ["营业时间"]},
+    {"id": "d02", "split": "dev", "question": "brazilian wax 多少钱", "expected": ["蜜蜡脱毛（Waxing）价目表"]},
+    {"id": "d03", "split": "dev", "question": "我皮肤很干，上妆会卡粉，有什么 facial 推荐？", "expected": ["水光补湿护理（Hydra Boost Facial）"]},
+    {"id": "d04", "split": "dev", "question": "can pay using touch n go?", "expected": ["付款方式"]},
+    {"id": "d05", "split": "dev", "question": "我老公想做脸，你们有 men's 的吗", "expected": ["男士护理（Men's Facial）"]},
+    {"id": "d06", "split": "dev", "question": "明天的 appointment 我想 cancel，会被罚钱吗？", "expected": ["取消预约（Cancellation）"]},
+    {"id": "d07", "split": "dev", "question": "接睫毛之后可以洗脸吗", "expected": ["睫毛嫁接后的护理须知"]},
+    {"id": "d08", "split": "dev", "question": "如果我迟到 20 分钟怎么办", "expected": ["迟到规定"]},
+    {"id": "d09", "split": "dev", "question": "Glow Lab 的防晒霜多少钱", "expected": ["可以买 Glow Lab 产品回家用吗？"]},
+    {"id": "d10", "split": "dev", "question": "肩膀很酸，有没有按摩可以放松", "expected": ["肩颈舒缓按摩（Neck & Shoulder Relief）", "芳疗全身按摩（Aromatherapy Body Massage）"]},
+    {"id": "d11", "split": "dev", "question": "第一次来有优惠吗？", "expected": ["新顾客首次体验价（First Visit Offer）", "新顾客免费皮肤分析（Skin Analysis）"]},
+    {"id": "d12", "split": "dev", "question": "生日月份有 discount 吗", "expected": ["生日优惠"]},
+    {"id": "d13", "split": "dev", "question": "你们的床单毛巾会换新的吗？卫生 ok 吗", "expected": ["卫生与安全标准"]},
+    {"id": "d14", "split": "dev", "question": "做完 IPL 要隔多久再做", "expected": ["IPL 光子脱毛（IPL Hair Removal）"]},
+    {"id": "d15", "split": "dev", "question": "我想 top up 储值，有什么好处", "expected": ["会员储值制度（Membership）"]},
+    {"id": "d16", "split": "dev", "question": "我做完脸之后满脸红肿发痒", "expected": ["护理后皮肤过敏或不舒服怎么办？"]},
+    {"id": "d17", "split": "dev", "question": "伴娘团 5 个人可以一起来吗", "expected": ["新娘与团体预约"]},
+    {"id": "d18", "split": "dev", "question": "你们有做双眼皮手术吗？", "expected": []},
+    {"id": "d19", "split": "dev", "question": "有没有 hair cut 剪头发的服务？", "expected": []},
+    {"id": "d20", "split": "dev", "question": "Botox 打一针多少钱？", "expected": []},
+
+    {"id": "h01", "split": "holdout", "question": "我想送朋友 voucher 当礼物", "expected": ["礼券（Gift Voucher）"]},
+    {"id": "h02", "split": "holdout", "question": "creditcard 可以分期吗", "expected": ["分期付款"]},
+    {"id": "h03", "split": "holdout", "question": "老板是谁？", "expected": ["创办人林嘉欣（Jessica Lim）", "美容师团队介绍"]},
+    {"id": "h04", "split": "holdout", "question": "大年初二有开吗", "expected": ["公共假期营业安排"]},
+    {"id": "h05", "split": "holdout", "question": "眼袋好大，熬夜很多", "expected": ["眼部护理（Eye Revival Treatment）"]},
+    {"id": "h06", "split": "holdout", "question": "我很怕痛，又想清毛孔", "expected": ["Aqua Peel 小气泡清洁护理（Aqua Peel Facial）"]},
+    {"id": "h07", "split": "holdout", "question": "下个月想 book 雾眉要先付钱吗", "expected": ["订金（Deposit）", "半永久雾眉（Ombre Powder Brows）"]},
+    {"id": "h08", "split": "holdout", "question": "我的资料你们会卖给别人吗", "expected": ["个人资料和隐私保护"]},
+    {"id": "h09", "split": "holdout", "question": "你们有卖减肥药吗？", "expected": []},
+    {"id": "h10", "split": "holdout", "question": "你们有 teeth whitening 牙齿美白吗？", "expected": []}
+  ]
+}

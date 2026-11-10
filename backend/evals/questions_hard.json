@@ -1,0 +1,36 @@
+{
+  "_说明": "第二批检索评估题（难题版）。出题时没有先跑系统，只根据知识库内容和顾客会怎么问来写。difficulty：medium／hard／very_hard。need_all=true 表示 expected 里的每一块都要进前 5 名才算答完整（Full@5）；其他题找到任何一块就算对（Hit@K）。expected 为空 = 资料里没有答案（大多是'很像但没有'的题）。holdout 的题不能拿来调整系统。",
+  "questions": [
+    {"id": "d21", "split": "dev", "difficulty": "hard", "type": "用字不同", "question": "上次在别家挤粉刺挤到流血，这次想找温和一点、不用手挤的清洁", "expected": ["Aqua Peel 小气泡清洁护理（Aqua Peel Facial）"]},
+    {"id": "d22", "split": "dev", "difficulty": "very_hard", "type": "有条件", "question": "我怀孕 20 周，想先 book 雾眉等生完再做，现在可以付订金吗？", "expected": ["怀孕可以做哪些护理？", "半永久雾眉（Ombre Powder Brows）", "订金（Deposit）"]},
+    {"id": "d23", "split": "dev", "difficulty": "hard", "type": "有条件", "question": "星期六去做脸，可以用学生证打折吗？", "expected": ["学生与乐龄优惠"]},
+    {"id": "d24", "split": "dev", "difficulty": "very_hard", "type": "推理", "question": "我订了后天早上 10 点，如果明天晚上才说不去，会被扣钱吗？", "expected": ["取消预约（Cancellation）"]},
+    {"id": "d25", "split": "dev", "difficulty": "hard", "type": "口语", "question": "eyelash 补接要几钱 ah？上次接已经 5 个星期了", "expected": ["睫毛嫁接（Eyelash Extension）"]},
+    {"id": "d26", "split": "dev", "difficulty": "very_hard", "type": "两块资料", "need_all": true, "question": "我想买 RF 的 5 次配套，可以刷卡分 12 个月吗？", "expected": ["RF 射频紧致护理（RF Lifting Treatment）", "分期付款"]},
+    {"id": "d27", "split": "dev", "difficulty": "medium", "type": "用字不同", "question": "手肘和膝盖黑黑粗粗的，有什么可以改善？", "expected": ["身体去角质（Body Scrub）"]},
+    {"id": "d28", "split": "dev", "difficulty": "hard", "type": "有条件", "question": "腋下 wax 完当天晚上可以去泡温泉吗？", "expected": ["蜜蜡脱毛（Waxing）价目表"]},
+    {"id": "d29", "split": "dev", "difficulty": "hard", "type": "推理", "question": "塞车会迟到 20 分钟左右，还会帮我做完整的护理吗？价钱会少吗？", "expected": ["迟到规定"]},
+    {"id": "d30", "split": "dev", "difficulty": "hard", "type": "用字不同", "question": "如果我放了两次飞机，以后 book 会有什么不一样？", "expected": ["缺席（No-show）"]},
+    {"id": "d31", "split": "dev", "difficulty": "medium", "type": "用字不同", "question": "擦了网购的精华后脸一直刺刺红红的，现在想做脸可以吗？", "expected": ["敏感肌修护护理（Sensitive Skin Repair Facial）", "皮肤有湿疹或皮肤病可以做护理吗？"]},
+    {"id": "d32", "split": "dev", "difficulty": "hard", "type": "口语", "question": "can I bring my baby along? no one can jaga her that day", "expected": ["可以带小孩来吗？"]},
+    {"id": "d33", "split": "dev", "difficulty": "medium", "type": "有条件", "question": "想买礼券送妈妈，但她可能明年下半年才有空去，会不会过期？", "expected": ["礼券（Gift Voucher）"]},
+    {"id": "d34", "split": "dev", "difficulty": "very_hard", "type": "有条件", "question": "第一次去，想用体验价但是要老板娘亲自帮我做，可以吗？", "expected": ["新顾客首次体验价（First Visit Offer）"]},
+    {"id": "d35", "split": "dev", "difficulty": "hard", "type": "用字不同", "question": "配套还剩 4 次，我要搬去新加坡了，可以给我姐姐用吗？", "expected": ["配套和储值可以退款吗？", "护理配套（Treatment Packages）"]},
+    {"id": "d36", "split": "dev", "difficulty": "hard", "type": "两块资料", "question": "我是金卡会员，生日那个月去会有什么礼物？", "expected": ["会员储值制度（Membership）", "生日优惠"]},
+    {"id": "d37", "split": "dev", "difficulty": "medium", "type": "用字不同", "question": "常刮胡子脸会痒，毛孔又粗又油，有适合我的吗？", "expected": ["男士护理（Men's Facial）"]},
+    {"id": "d38", "split": "dev", "difficulty": "very_hard", "type": "很像但没有", "question": "你们有打嘴唇 filler 吗？想要嘴唇丰满一点", "expected": []},
+    {"id": "d39", "split": "dev", "difficulty": "hard", "type": "很像但没有", "question": "有没有上门服务？可以来我家帮我做脸吗？", "expected": []},
+    {"id": "d40", "split": "dev", "difficulty": "hard", "type": "很像但没有", "question": "你们可以帮我烫头发吗？顺便染色", "expected": []},
+
+    {"id": "h11", "split": "holdout", "difficulty": "medium", "type": "有条件", "question": "开车去好停车吗？星期天也要付停车费吗？", "expected": ["停车资讯"]},
+    {"id": "h12", "split": "holdout", "difficulty": "very_hard", "type": "两块资料", "need_all": true, "question": "下个月结婚，想做婚前护理的配套，可以用信用卡分期付款吗？", "expected": ["新娘与团体预约", "分期付款"]},
+    {"id": "h13", "split": "holdout", "difficulty": "hard", "type": "有条件", "question": "做完 vitamin C 那个之后，可以马上化妆去吃晚餐吗？", "expected": ["做完脸部护理后可以马上化妆吗？"]},
+    {"id": "h14", "split": "holdout", "difficulty": "very_hard", "type": "用字不同", "question": "我现在在吃 Roaccutane，可以做 acne 的 facial 吗？", "expected": ["痘痘肌净化护理（Acne Clear Facial）"]},
+    {"id": "h15", "split": "holdout", "difficulty": "hard", "type": "口语", "question": "gel nail 要卸掉另外收钱吗？之前是在你们这边做的", "expected": ["美甲价目表"]},
+    {"id": "h16", "split": "holdout", "difficulty": "hard", "type": "推理", "question": "我储值了 RM 2,000，我妈妈去做可以扣我的钱吗？", "expected": ["会员储值制度（Membership）"]},
+    {"id": "h17", "split": "holdout", "difficulty": "medium", "type": "用字不同", "question": "介绍朋友去做，我自己有什么好处？会过期吗？", "expected": ["推荐朋友优惠（Referral Program）"]},
+    {"id": "h18", "split": "holdout", "difficulty": "very_hard", "type": "用字不同", "question": "我对 paraben 过敏，你们用的东西有没有这个成分？", "expected": ["使用的产品", "可以买 Glow Lab 产品回家用吗？"]},
+    {"id": "h19", "split": "holdout", "difficulty": "hard", "type": "很像但没有", "question": "可以帮我把手上的纹身洗掉吗？", "expected": []},
+    {"id": "h20", "split": "holdout", "difficulty": "very_hard", "type": "很像但没有", "question": "你们有用线绞眉毛（threading）吗？", "expected": []}
+  ]
+}

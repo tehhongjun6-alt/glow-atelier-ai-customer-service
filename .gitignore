@@ -1,0 +1,30 @@
+# ---------- 密钥（绝对不能上传）----------
+.env
+**/.env
+backend/secrets/
+secrets/
+
+# ---------- Python ----------
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ---------- 前端 ----------
+node_modules/
+dist/
+*.tsbuildinfo
+
+# ---------- 程序产生的档案（重跑就会再产生）----------
+output/
+backend/evals/cache/
+evals/cache/
+
+# ---------- 编辑器／系统 ----------
+.vscode/
+.claude/
+.DS_Store
+Thumbs.db
+
+# ---------- 旧的参考答案（第 2 步搬走的旧代码，已被现在的版本取代）----------
+_reference/
