@@ -104,4 +104,4 @@ def test_cancel_also_needs_two_steps(db, calendar, emails):
     assert tools.confirm_action(agent)[0]["success"] is False          # 同一轮
     assert db.tables["bookings"].rows[0]["status"] == "confirmed"
     agent.gate.new_turn()
-    assert tools.confirm_action(agent)[0]["booking"]["status"] == "cancelled"
+    assert tools.confirm_action(agent, otp_code=emails.otp_codes[-1])[0]["booking"]["status"] == "cancelled"

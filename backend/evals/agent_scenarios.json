@@ -121,7 +121,7 @@
       "title": "有编号的改期",
       "turns": [
         "我想把 GA-TEST01 改到星期四早上 11 点，电话 012-888 6666",
-        "ok 确认"
+        "ok 确认，验证码 {otp}"
       ],
       "checks": {
         "called": [
@@ -158,7 +158,7 @@
       "turns": [
         "我忘了预约编号，电话是 0128886666，电邮 chen@example.com，想取消预约",
         "对，就是那个，帮我取消",
-        "确认"
+        "确认，验证码是 {otp}"
       ],
       "checks": {
         "called": [
@@ -216,7 +216,7 @@
       "title": "24 小时内取消，要先说明规定",
       "turns": [
         "帮我取消今天下午的预约 GA-TEST02，电话 0128886666",
-        "好，我知道了，确认取消"
+        "好，我知道了，确认取消，验证码 {otp}"
       ],
       "checks": {
         "answer_any_turn": [
@@ -701,6 +701,41 @@
         "not_called": [
           "confirm_action"
         ]
+      }
+    },
+    {
+      "id": "O1",
+      "category": "改期／取消",
+      "setup": [
+        {
+          "booking_code": "GA-TEST01",
+          "service": "男士护理",
+          "date": "2026-11-11",
+          "time": "15:00"
+        }
+      ],
+      "title": "验证码打错两次，第三次才对：不能提早转人工",
+      "turns": [
+        "我想取消 GA-TEST01，电话 012-888 6666",
+        "确认取消，验证码 {wrong_otp}",
+        "不好意思打错了，是 {wrong_otp}",
+        "确认，验证码 {otp}"
+      ],
+      "repeat": 3,
+      "checks": {
+        "called": [
+          "request_cancel",
+          "confirm_action"
+        ],
+        "not_called": [
+          "request_human_handoff"
+        ],
+        "handoffs": 0,
+        "booking_state": {
+          "GA-TEST01": {
+            "status": "cancelled"
+          }
+        }
       }
     }
   ]

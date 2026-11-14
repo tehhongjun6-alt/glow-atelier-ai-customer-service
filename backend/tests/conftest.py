@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from booking import bookings, notifications, rules
+from booking import bookings, notifications, otp, rules
 from handoff import handoffs
 
 NOW = datetime(2026, 11, 10, 9, 0, tzinfo=rules.TIMEZONE)   # 星期二
@@ -171,8 +171,13 @@ def calendar(monkeypatch):
 
 @pytest.fixture
 def emails(monkeypatch):
-    """假的寄信。emails.fail = True 会让寄信失败。"""
-    log = SimpleNamespace(sent=[], fail=False)
+    """假的寄信。emails.fail = True 会让寄信失败。验证码会记在 emails.otp_codes（最新的在最后）。"""
+    log = SimpleNamespace(sent=[], fail=False, otp_codes=[], otp_fail=False)
+
+    def send_otp(address, code):
+        if log.otp_fail:
+            raise RuntimeError("Gmail 连不上")
+        log.otp_codes.append(code)
 
     def send_for(kind, result):
         if log.fail:
@@ -181,6 +186,8 @@ def emails(monkeypatch):
         return True, None
 
     monkeypatch.setattr(notifications, "send_for", send_for)
+    monkeypatch.setattr(otp, "_send", send_otp)
+    monkeypatch.setattr(notifications, "_sent_today", notifications.defaultdict(int))   # 每个测试的寄信上限重新算
     return log
 
 

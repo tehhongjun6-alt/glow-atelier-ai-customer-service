@@ -40,7 +40,7 @@ log = logging.getLogger("glow.bookings")
 # 系统出错时给 AI（也就是给顾客）看的话。真正的原因只写进后端日志，不让顾客看到内部细节。
 SYSTEM_BUSY = "系统暂时无法完成这个操作，请稍后再试，或直接联系门市同事。"
 
-MAX_ACTIVE_BOOKINGS = 3        # 同一个电话或电邮最多几笔未来的预约
+MAX_ACTIVE_BOOKINGS = 10       # 同一个电话或电邮最多几笔未来的预约（系统防滥用设定，不是公司公开的规定）
 MAX_NAME_LENGTH = 30
 MAX_NOTES_LENGTH = 100
 URL_PATTERN = re.compile(r"https?://|www\.|\b[\w-]+\.(com|net|org|my|io|xyz|top|cn|link|info|biz|co|me|ly)\b", re.I)

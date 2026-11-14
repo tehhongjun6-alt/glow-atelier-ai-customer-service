@@ -13,11 +13,12 @@
    返回 (给模型看的结果, 给 trace 记录的简短说明)
 """
 
+import logging
 import re
 
 from google.genai import types
 
-from booking import bookings
+from booking import bookings, otp
 from booking.services import BEAUTICIANS, SERVICES
 from handoff import handoffs
 from rag.search import hybrid_search
@@ -89,12 +90,12 @@ DECLARATIONS = [
     ),
     types.FunctionDeclaration(
         name="request_cancel",
-        description="准备取消一笔预约（核对预约编号和手机号码）。" + CONFIRM_NOTE,
+        description="准备取消一笔预约（核对预约编号和手机号码，并寄验证码到预约登记的电邮）。" + CONFIRM_NOTE,
         parameters_json_schema=_schema({"booking_code": CODE, "phone": PHONE}, ["booking_code", "phone"]),
     ),
     types.FunctionDeclaration(
         name="request_reschedule",
-        description="准备把预约改到新的日期和时间（核对资料、检查新时段）。" + CONFIRM_NOTE,
+        description="准备把预约改到新的日期和时间（核对资料、检查新时段，并寄验证码到预约登记的电邮）。" + CONFIRM_NOTE,
         parameters_json_schema=_schema(
             {"booking_code": CODE, "phone": PHONE, "new_date": DATE, "new_time": TIME},
             ["booking_code", "phone", "new_date", "new_time"],
@@ -122,7 +123,9 @@ DECLARATIONS = [
     types.FunctionDeclaration(
         name="confirm_action",
         description="顾客已经在最新一则讯息明确同意之后，执行刚才暂存的预约／取消／改期。",
-        parameters_json_schema=_schema({}, []),
+        parameters_json_schema=_schema({
+            "otp_code": {"type": "string", "description": "取消或改期时必填：顾客从电邮收到的 6 位数验证码（新预约不用填）"},
+        }, []),
     ),
 ]
 
@@ -149,6 +152,8 @@ def _short(result):
     if not result.get("success"):
         return [f"❌ {result.get('error')}"]
     if result.get("status") == "waiting_for_customer_confirmation":
+        if result.get("otp_sent_to"):
+            return [f"⏸️ 已暂存，验证码寄到 {result['otp_sent_to']}，等顾客确认"]
         return ["⏸️ 已暂存，等顾客确认"]
     if "booking" in result:
         b = result["booking"]
@@ -226,8 +231,7 @@ def request_cancel(agent, booking_code, phone):
         return error, _short(error)
     summary = {**bookings.describe(row), "within_24_hours": bookings.rules.hours_until(
         bookings._to_local(row["start_at"])) < 24}
-    result = agent.gate.stage("cancel", row, summary)
-    return result, _short(result)
+    return _stage_with_otp(agent, "cancel", row, summary, row["email"])
 
 
 def request_reschedule(agent, booking_code, phone, new_date, new_time):
@@ -237,12 +241,23 @@ def request_reschedule(agent, booking_code, phone, new_date, new_time):
     new = bookings.describe({**plan["row"], "start_at": plan["start_at"], "end_at": plan["end_at"]})
     summary = {"old": bookings.describe(plan["row"]), "new": new,
                "within_24_hours": bookings.rules.hours_until(bookings._to_local(plan["row"]["start_at"])) < 24}
-    result = agent.gate.stage("reschedule", plan, summary)
+    return _stage_with_otp(agent, "reschedule", plan, summary, plan["row"]["email"])
+
+
+def _stage_with_otp(agent, kind, payload, summary, email):
+    """改期／取消：寄验证码到预约登记的电邮，再暂存等顾客确认。寄不出去就不暂存。"""
+    record, error = otp.issue(email)
+    if error:
+        logging.getLogger("glow.actions").error("验证码寄送失败：%s", error)
+        result = {"success": False, "needs_staff": True,
+                  "error": "验证码暂时寄不出去，没办法在线上改期或取消。请提议帮顾客转给门市同事。"}
+        return result, _short(result)
+    result = agent.gate.stage(kind, payload, summary, otp_record=record, otp_sent_to=bookings._mask_email(email))
     return result, _short(result)
 
 
-def confirm_action(agent):
-    result = agent.gate.confirm()
+def confirm_action(agent, otp_code=None):
+    result = agent.gate.confirm(otp_code)
     return result, _short(result)
 
 

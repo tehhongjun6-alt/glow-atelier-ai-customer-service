@@ -27,7 +27,7 @@ from pathlib import Path
 
 import agent.agent as agent_module
 from agent.agent import FALLBACK_ANSWER, MODEL, CustomerServiceAgent
-from booking import bookings, notifications, rules
+from booking import bookings, notifications, otp, rules
 from booking.services import SERVICES
 from handoff import handoffs
 from tests.conftest import NOW, FakeSupabase
@@ -62,6 +62,7 @@ class FakeWorld:
         self.db = FakeSupabase()
         self.calendar = []
         self.emails = []
+        self.otp_codes = []   # 寄出的验证码（假寄信），情境里用 {otp}／{wrong_otp} 代入
         for b in setup or []:
             start = rules.parse_datetime(b["date"], b["time"])
             end = start + timedelta(minutes=SERVICES[b["service"]])
@@ -78,6 +79,8 @@ class FakeWorld:
         bookings.google_calendar.update_event_time = lambda eid, s, e: self.calendar.append(("update", eid))
         bookings.google_calendar.delete_event = lambda eid: self.calendar.append(("delete", eid))
         notifications.send_for = lambda kind, result: (self.emails.append(kind) or (True, None))
+        otp._send = lambda address, code: self.otp_codes.append(code)
+        notifications._sent_today.clear()   # 每个情境的"每天 5 封"上限重新算
 
     def bookings(self, status="confirmed"):
         return [r for r in self.db.tables["bookings"].rows if r["status"] == status]
@@ -103,6 +106,9 @@ def run_scenario(scenario):
         bot = CustomerServiceAgent(channel="chat")
     turns = []
     for message in scenario["turns"]:
+        # 验证码是随机的，情境里写 {otp}（正确的）或 {wrong_otp}（一定错的），跑的时候才代入
+        real = world.otp_codes[-1] if world.otp_codes else "000000"
+        message = message.replace("{otp}", real).replace("{wrong_otp}", f"{(int(real) + 1) % 1_000_000:06d}")
         if email:   # 和 email_worker.py 交给 Agent 的格式一样
             message = f"寄件人：{email['name']} <{email['from']}>\n主旨：{email['subject']}\n\n{message}"
         result = bot.chat(message)

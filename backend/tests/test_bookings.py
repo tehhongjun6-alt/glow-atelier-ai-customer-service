@@ -14,7 +14,7 @@ def book(service="男士护理", date=WEDNESDAY, time="15:00", **extra):
 
 
 def book_as(i, service="男士护理", date=WEDNESDAY, time="15:00", **extra):
-    """用第 i 位顾客订（每人最多 3 笔未来预约，所以测名额时要用不同的人）。"""
+    """用第 i 位顾客订（每人有未来预约笔数上限 MAX_ACTIVE_BOOKINGS，所以测名额时要用不同的人）。"""
     return bookings.create_booking(customer_name=f"顾客{i}", phone=f"01700000{i:02d}", email=f"c{i}@example.com",
                                    service=service, date=date, time=time, **extra)
 
