@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from langfuse import observe
 from googleapiclient.discovery import build
 
 from integrations.google_auth import get_credentials
@@ -60,6 +61,8 @@ def _event_body(booking):
     }
 
 
+# Observability：每次写日历都是一个步骤；出错（抛出例外）时 Langfuse 会自动标成红色 ERROR
+@observe(name="google-calendar-create")
 def create_event(booking):
     """新增活动，返回活动 ID。不邀请顾客（确认信由第 5 步用 Gmail 发）。"""
     event = get_service().events().insert(
@@ -68,6 +71,7 @@ def create_event(booking):
     return event["id"]
 
 
+@observe(name="google-calendar-update")
 def update_event_time(event_id, start_at, end_at):
     """改期：只改开始和结束时间。"""
     get_service().events().patch(
@@ -81,6 +85,7 @@ def update_event_time(event_id, start_at, end_at):
     ).execute()
 
 
+@observe(name="google-calendar-delete")
 def delete_event(event_id):
     """取消：从日历删除活动（数据库里的记录会保留，状态改成 cancelled）。"""
     get_service().events().delete(calendarId=calendar_id(), eventId=event_id, sendUpdates="none").execute()

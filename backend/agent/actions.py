@@ -13,6 +13,8 @@
 为什么不只靠 prompt？测试时模型真的跳过了确认步骤，所以要用代码挡。
 """
 
+import logging
+
 from booking import bookings, notifications
 
 COMMITS = {
@@ -59,5 +61,6 @@ class ActionGate:
             sent, error = notifications.send_for(pending["kind"], result)
             result["confirmation_email_sent"] = sent
             if error:
-                result["email_error"] = error
+                # 寄信失败的原因只写进日志；AI 只需要知道"没寄出"（confirmation_email_sent=False）
+                logging.getLogger("glow.actions").error("通知信寄送失败：%s", error)
         return result

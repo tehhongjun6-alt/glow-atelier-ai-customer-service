@@ -4,7 +4,29 @@
 信件内容用固定模板（不是 AI 写的）：通知信要准确、格式一致，不需要创意。
 """
 
+import threading
+from collections import defaultdict
+
+from langfuse import get_client, observe
+
+from booking import rules
 from integrations import gmail
+
+# 防邮件轰炸：电邮不用验证，坏人可以填别人的电邮，订了又取消，用你的 Gmail 一直寄信给对方。
+# 所以每个电邮每天最多收 MAX_EMAILS_PER_ADDRESS_PER_DAY 封系统信；超过就不寄（预约照样成立）。
+# 计数存在内存里，服务器重启会归零。
+MAX_EMAILS_PER_ADDRESS_PER_DAY = 5
+_sent_today = defaultdict(int)     # (日期, 电邮) → 今天寄了几封
+_sent_lock = threading.Lock()
+
+
+def _allow(address):
+    key = (rules.now().strftime("%Y-%m-%d"), address.strip().lower())
+    with _sent_lock:
+        if _sent_today[key] >= MAX_EMAILS_PER_ADDRESS_PER_DAY:
+            return False
+        _sent_today[key] += 1
+        return True
 
 ADDRESS = "No. 23-1, Jalan SS 2/64, SS2, 47300 Petaling Jaya, Selangor"
 FOOTER = (
@@ -79,11 +101,18 @@ def build(kind, result):
     return booking_cancelled(b)
 
 
+@observe(name="confirmation-email")
 def send_for(kind, result):
     """寄通知信。成功返回 (True, None)；失败返回 (False, 原因)。寄信失败不影响预约本身。"""
+    address = result["booking"]["email"]
+    if not _allow(address):
+        reason = f"{address} 今天已经收到 {MAX_EMAILS_PER_ADDRESS_PER_DAY} 封系统信，不再寄送（防止邮件轰炸）"
+        get_client().update_current_span(level="WARNING", status_message=reason)
+        return False, reason
     try:
         subject, body = build(kind, result)
-        gmail.send_email(result["booking"]["email"], subject, body, kind=f"booking-{kind}")
+        gmail.send_email(address, subject, body, kind=f"booking-{kind}")
         return True, None
     except Exception as error:
+        get_client().update_current_span(level="ERROR", status_message=f"通知信没寄出：{error}")
         return False, str(error)

@@ -3,13 +3,15 @@ import ChatPanel from "./components/ChatPanel";
 import KnowledgePanel from "./components/KnowledgePanel";
 import BookingsPanel from "./components/BookingsPanel";
 import HandoffPanel from "./components/HandoffPanel";
+import EmailPanel from "./components/EmailPanel";
 
-type Tab = "knowledge" | "bookings" | "handoffs";
+type Tab = "knowledge" | "bookings" | "handoffs" | "email";
 
-const TABS: { id: Tab; label: string; hint: string }[] = [
-  { id: "knowledge", label: "知识库", hint: "AI 回答时读的资料" },
-  { id: "bookings", label: "预约日历", hint: "AI 帮顾客订的时段" },
-  { id: "handoffs", label: "转人工后台", hint: "同事接手的工单" },
+const TABS: { id: Tab; label: string }[] = [
+  { id: "knowledge", label: "知识库" },
+  { id: "bookings", label: "预约日历" },
+  { id: "handoffs", label: "转人工后台" },
+  { id: "email", label: "邮箱" },
 ];
 
 export default function App() {
@@ -37,7 +39,6 @@ export default function App() {
       <header className="masthead">
         <div className="brand">
           <span className="brand-name">Glow Atelier 光研美学</span>
-          <span className="brand-sub">AI 客服作品集 demo</span>
         </div>
         <p className="masthead-note">
           左边扮演顾客和 AI 聊天；右边看 AI 读了哪段资料、订了哪个时段、转了哪张工单。
@@ -60,7 +61,6 @@ export default function App() {
                 onClick={() => setTab(t.id)}
               >
                 <span className="tab-label">{t.label}</span>
-                <span className="tab-hint">{t.hint}</span>
               </button>
             ))}
           </nav>
@@ -68,6 +68,7 @@ export default function App() {
             {tab === "knowledge" && <KnowledgePanel cited={cited} />}
             {tab === "bookings" && <BookingsPanel refreshKey={refreshKey} />}
             {tab === "handoffs" && <HandoffPanel refreshKey={refreshKey} />}
+            {tab === "email" && <EmailPanel />}
           </div>
         </section>
       </main>

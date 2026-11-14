@@ -51,7 +51,6 @@ button { cursor: pointer; }
 }
 .brand { display: flex; align-items: baseline; gap: 14px; }
 .brand-name { font-family: var(--serif); font-weight: 700; font-size: 26px; letter-spacing: 0.02em; }
-.brand-sub { color: var(--ink-soft); font-size: 14px; }
 .masthead-note { margin: 0; max-width: 46ch; color: var(--ink-soft); font-size: 13.5px; text-align: right; }
 
 .workspace {
@@ -63,7 +62,6 @@ button { cursor: pointer; }
   min-height: 0; display: flex; flex-direction: column; overflow: hidden;
 }
 .pane-title { font-family: var(--serif); font-size: 19px; margin: 0; }
-.pane-sub { margin: 0; color: var(--ink-soft); font-size: 13px; }
 
 /* ---------- 聊天 ---------- */
 .chat { display: flex; flex-direction: column; height: 100%; min-height: 0; }
@@ -135,7 +133,6 @@ button.ghost:hover { border-color: var(--teal); }
   background: none; border: none; border-bottom: 3px solid transparent; padding: 6px 14px 9px;
 }
 .tab-label { font-family: var(--serif); font-size: 16px; font-weight: 700; }
-.tab-hint { font-size: 12px; color: var(--ink-soft); }
 .tab.is-active { border-bottom-color: var(--teal); }
 .tab.is-active .tab-label { color: var(--teal-deep); }
 .tab-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
@@ -210,10 +207,6 @@ button.ghost:hover { border-color: var(--teal); }
 
 /* ---------- 转人工后台 ---------- */
 .handoffs { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.demo-note {
-  margin: 12px 18px 0; padding: 8px 12px; border-radius: 10px;
-  background: var(--amber-soft); color: var(--amber); font-size: 13px; max-width: 80ch;
-}
 .filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 18px; align-items: center; }
 .filter { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 4px 12px; font-size: 13.5px; }
 .filter.is-active { background: var(--ink); color: #fff; border-color: var(--ink); }
@@ -295,10 +288,27 @@ button.ghost:hover { border-color: var(--teal); }
   .calendar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .handoff-body { grid-template-columns: 1fr; }
   .ticket-list { border-right: none; border-bottom: 1px solid var(--line); max-height: 240px; }
-  .tab-hint { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .dot { animation: none; opacity: 0.7; }
   * { scroll-behavior: auto !important; }
 }
+
+/* ---------- 邮箱（自动回复开关） ---------- */
+.email-panel { padding: 18px 20px; overflow-y: auto; }
+.email-switch-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 16px; }
+.email-title { font-family: var(--serif); font-size: 17px; margin: 0 0 4px; }
+.switch {
+  flex: none; position: relative; display: inline-flex; align-items: center; justify-content: flex-end;
+  width: 64px; height: 32px; padding: 0 10px; border: none; border-radius: 999px;
+  background: var(--line); color: var(--ink-soft); font-size: 13px; font-weight: 600; transition: background 0.2s;
+}
+.switch-knob {
+  position: absolute; left: 4px; top: 4px; width: 24px; height: 24px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); transition: transform 0.2s;
+}
+.switch.is-on { background: var(--teal); color: #fff; justify-content: flex-start; }
+.switch.is-on .switch-knob { transform: translateX(32px); }
+.switch:disabled { opacity: 0.5; cursor: not-allowed; }
+.email-error { padding: 8px 0 0; font-size: 13.5px; }

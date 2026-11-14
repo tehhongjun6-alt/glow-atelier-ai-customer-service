@@ -17,13 +17,19 @@
 
 import argparse
 import json
+import logging
 import re
 import time
 from pathlib import Path
 
+from langfuse import get_client, observe, propagate_attributes
+
 from agent.agent import FALLBACK_ANSWER, CustomerServiceAgent
 from handoff import handoffs
 from integrations import gmail
+from log_setup import setup_logging
+
+log = logging.getLogger("glow.email")
 
 STATE_FILE = Path(__file__).resolve().parent / "secrets" / "gmail_state.json"
 REPLIED_LABEL = "GlowAI-Replied"
@@ -47,7 +53,7 @@ def start_epoch():
     epoch = int(time.time())
     STATE_FILE.parent.mkdir(exist_ok=True)
     STATE_FILE.write_text(json.dumps({"start_epoch": epoch}), encoding="utf-8")
-    print(f"第一次启动：只会处理 {time.strftime('%Y-%m-%d %H:%M', time.localtime(epoch))} 之后收到的信")
+    log.info("第一次启动：只会处理 %s 之后收到的信", time.strftime('%Y-%m-%d %H:%M', time.localtime(epoch)))
     return epoch
 
 
@@ -85,12 +91,12 @@ def handle(msg, dry_run):
 
     result = agent.chat(text)
     if result["answer"] == FALLBACK_ANSWER or any(step["tool"] == "error" for step in result["trace"]):
-        print("   ❌ Gemini 出错或没有答案，这封信先不回，下一轮再试")
+        log.warning("Gemini 出错或没有答案，这封信先不回，下一轮再试（thread %s）", msg["thread_id"])
         return False
 
     for step in result["trace"]:
-        print(f"   🔧 {step['tool']} → {', '.join(step['results'][:2])}")
-    print("   ✉️ 回信内容：\n" + "\n".join("      " + line for line in result["answer"].splitlines()))
+        log.info("工具 %s → %s", step["tool"], ", ".join(step["results"][:2]))
+    log.info("回信内容：\n%s", "\n".join("      " + line for line in result["answer"].splitlines()))
 
     if dry_run:
         return True
@@ -102,27 +108,48 @@ def handle(msg, dry_run):
     return True
 
 
+@observe(name="email-message", capture_input=False)
+def process_message(msg, company, dry_run):
+    """处理一封信，返回处理结果。
+    Observability：一封信 = Langfuse 里的一条 trace，连被略过、转人工的信也看得到原因。
+    """
+    langfuse = get_client()
+    # 只送寄件人和主旨（信的内文已经在 customer-chat 那一步里，不用重复送）
+    langfuse.update_current_span(input={"from": msg["from_address"], "subject": msg["subject"]})
+
+    ticket = handoffs.open_ticket_for_thread(msg["thread_id"])
+    if ticket:
+        log.info("这个对话已经转人工（工单 %s，%s），AI 不回复，留给同事",
+                 ticket["ticket_code"], handoffs.STATUS_NAMES[ticket["status"]])
+        if not dry_run:
+            gmail.add_label(msg["id"], HANDOFF_LABEL)
+        return f"已转人工（工单 {ticket['ticket_code']}），AI 不回复"
+
+    reason = skip_reason(msg, company)
+    if reason:
+        log.info("略过：%s", reason)
+        if not dry_run:
+            gmail.add_label(msg["id"], SKIPPED_LABEL)
+        return f"略过：{reason}"
+
+    if handle(msg, dry_run):
+        return "dry-run：回信已写好，没有寄出" if dry_run else "已回信"
+    outcome = "Gemini 出错或没有答案，这封信先不回，下一轮再试"
+    langfuse.update_current_span(level="WARNING", status_message=outcome)
+    return outcome
+
+
 def run_once(dry_run):
     company = gmail.company_address()
     ids = gmail.search(search_query(company, start_epoch()), max_results=MAX_PER_ROUND)
-    print(f"[{time.strftime('%H:%M:%S')}] 找到 {len(ids)} 封新信" + ("（dry-run：不寄信、不加标签）" if dry_run else ""))
+    log.info("找到 %d 封新信%s", len(ids), "（dry-run：不寄信、不加标签）" if dry_run else "")
 
     for message_id in reversed(ids):   # 旧的先处理
         msg = gmail.get_message(message_id)
-        print(f"\n📩 {msg['from_address']}｜{msg['subject']}")
-        ticket = handoffs.open_ticket_for_thread(msg["thread_id"])
-        if ticket:
-            print(f"   🙋 这个对话已经转人工（工单 {ticket['ticket_code']}，{handoffs.STATUS_NAMES[ticket['status']]}），AI 不回复，留给同事")
-            if not dry_run:
-                gmail.add_label(message_id, HANDOFF_LABEL)
-            continue
-        reason = skip_reason(msg, company)
-        if reason:
-            print(f"   ⏭️ 略过：{reason}")
-            if not dry_run:
-                gmail.add_label(message_id, SKIPPED_LABEL)
-            continue
-        handle(msg, dry_run)
+        log.info("新信：%s｜%s", msg["from_address"], msg["subject"])
+        # Observability：同一个 Gmail 对话串成一个 session，标记为电邮渠道
+        with propagate_attributes(session_id=f"email-{msg['thread_id']}", tags=["email"]):
+            process_message(msg, company, dry_run)
 
 
 def main():
@@ -130,16 +157,17 @@ def main():
     parser.add_argument("--once", action="store_true", help="只检查一次")
     parser.add_argument("--dry-run", action="store_true", help="只显示会回什么，不寄信、不加标签")
     args = parser.parse_args()
+    setup_logging("email_worker.log")   # 统一 log 格式，同时写进 backend/logs/email_worker.log
 
     if args.once:
         run_once(args.dry_run)
         return
-    print(f"开始监听 {gmail.company_address()}，每 {POLL_SECONDS} 秒检查一次（Ctrl + C 停止）")
+    log.info("开始监听 %s，每 %d 秒检查一次（Ctrl + C 停止）", gmail.company_address(), POLL_SECONDS)
     while True:
         try:
             run_once(args.dry_run)
-        except Exception as error:   # 网络断了之类的，等下一轮再试，不要整个停掉
-            print(f"⚠️ 这一轮出错：{error}")
+        except Exception:   # 网络断了之类的，等下一轮再试，不要整个停掉
+            log.exception("这一轮出错，等下一轮再试")   # exception = ERROR 等级 + 完整出错位置
         time.sleep(POLL_SECONDS)
 
 

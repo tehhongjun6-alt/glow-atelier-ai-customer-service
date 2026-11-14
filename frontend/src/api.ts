@@ -49,6 +49,14 @@ export type Handoff = {
   conversation?: { role: "customer" | "ai"; text: string }[];
 };
 
+export type EmailStatus = {
+  running: boolean;
+  address: string | null;
+  interval_seconds: number;
+  last_check: string | null;
+  last_error: string | null;
+};
+
 // 后端有回应、但拒绝了请求（例如 429 使用次数超过上限）。和"连不上后端"分开处理。
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
@@ -79,4 +87,7 @@ export const api = {
     request<Handoff>(`/api/handoffs/${code}/accept`, { method: "POST", body: JSON.stringify({ staff }) }),
   resolve: (code: string, note: string) =>
     request<Handoff>(`/api/handoffs/${code}/resolve`, { method: "POST", body: JSON.stringify({ note }) }),
+  emailStatus: () => request<EmailStatus>("/api/email/status"),
+  emailStart: () => request<EmailStatus>("/api/email/start", { method: "POST" }),
+  emailStop: () => request<EmailStatus>("/api/email/stop", { method: "POST" }),
 };

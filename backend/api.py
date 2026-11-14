@@ -8,6 +8,9 @@
     GET  /api/handoffs/{code}          一张工单的详情（含对话）
     POST /api/handoffs/{code}/accept   接受
     POST /api/handoffs/{code}/resolve  处理完毕
+    GET  /api/email/status             邮箱自动回复开关的状态（预设关闭）
+    POST /api/email/start              打开：每 60 秒检查一次 Gmail，真的会回信
+    POST /api/email/stop               关闭
 
 用法（在 backend 资料夹里）：
     uvicorn api:app --reload --port 8000
@@ -24,12 +27,15 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from langfuse import propagate_attributes
 from pydantic import BaseModel
 
 from agent.agent import MODEL, CustomerServiceAgent
 from booking import bookings, rules
+from email_poller import poller
 from handoff import handoffs
 from integrations import google_auth
+from log_setup import setup_logging
 from ratelimit import chat_limiter, client_ip
 from rag.chunker import chunk_file
 from rag.store import supabase
@@ -37,6 +43,8 @@ from rag.store import supabase
 KNOWLEDGE_FILE = Path(__file__).resolve().parent.parent / "knowledge_base" / "glow_atelier.md"
 MAX_SESSIONS = 200
 SESSION_TTL_SECONDS = 2 * 60 * 60
+
+setup_logging("api.log")   # 统一 log 格式，同时写进 backend/logs/api.log
 
 app = FastAPI(title="Glow Atelier AI 客服 API")
 app.add_middleware(
@@ -78,7 +86,9 @@ def chat(req: ChatRequest, request: Request):
     if limited:
         raise HTTPException(429, limited)
     session_id = req.session_id or uuid.uuid4().hex
-    result = _get_agent(session_id).chat(message[:2000])
+    # Observability：这一题的所有记录都贴上 session_id，Langfuse 就能把同一位顾客的多轮对话串起来
+    with propagate_attributes(session_id=session_id, tags=["chat"]):
+        result = _get_agent(session_id).chat(message[:2000])
     return {"session_id": session_id, "model": MODEL, **result}
 
 
@@ -155,6 +165,24 @@ def accept_handoff(ticket_code: str, req: AcceptRequest):
 @app.post("/api/handoffs/{ticket_code}/resolve")
 def resolve_handoff(ticket_code: str, req: ResolveRequest):
     return _check(handoffs.resolve(ticket_code, req.note))
+
+
+# ---------- 邮箱（自动回复开关，预设关闭） ----------
+@app.get("/api/email/status")
+def email_status():
+    return poller.status()
+
+
+@app.post("/api/email/start")
+def email_start():
+    poller.start()
+    return poller.status()
+
+
+@app.post("/api/email/stop")
+def email_stop():
+    poller.stop()
+    return poller.status()
 
 
 @app.get("/api/health")

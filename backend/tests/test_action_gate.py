@@ -57,7 +57,8 @@ def test_email_failure_does_not_undo_booking(db, calendar, emails):
     stage_booking(agent)
     agent.gate.new_turn()
     result, _ = tools.confirm_action(agent)
-    assert result["success"] and result["confirmation_email_sent"] is False and "email_error" in result
+    assert result["success"] and result["confirmation_email_sent"] is False
+    assert "email_error" not in result          # 寄信失败的原因只进日志，不交给 AI
 
 
 def test_pending_action_is_used_only_once(db, calendar, emails):

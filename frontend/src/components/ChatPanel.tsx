@@ -162,7 +162,6 @@ export default function ChatPanel({
       <div className="chat-head">
         <div>
           <h2 className="pane-title">线上客服</h2>
-          <p className="pane-sub">中文、英文、混着讲都可以</p>
         </div>
         {messages.length > 0 && (
           <button className="link-button" onClick={startOver}>

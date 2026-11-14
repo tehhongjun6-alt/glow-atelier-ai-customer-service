@@ -9,3 +9,4 @@ uvicorn[standard]
 
 # 测试用（第 8 步：护栏的自动测试）
 pytest
+langfuse

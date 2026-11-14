@@ -95,9 +95,16 @@ def install_globals():
 def run_scenario(scenario):
     world = FakeWorld(scenario.get("setup"))
     world.install()
-    bot = CustomerServiceAgent(channel="chat")
+    email = scenario.get("email")   # 电邮渠道的情境：{"from": "...", "name": "...", "subject": "..."}
+    if email:
+        bot = CustomerServiceAgent(channel="email", email_thread_id=f"thread-{scenario['id']}",
+                                   customer_email=email["from"])
+    else:
+        bot = CustomerServiceAgent(channel="chat")
     turns = []
     for message in scenario["turns"]:
+        if email:   # 和 email_worker.py 交给 Agent 的格式一样
+            message = f"寄件人：{email['name']} <{email['from']}>\n主旨：{email['subject']}\n\n{message}"
         result = bot.chat(message)
         turns.append({
             "message": message,
@@ -142,6 +149,10 @@ def grade(scenario, turns, state):
         ok = any(all(str(a.get(k, "")).find(v) != -1 for k, v in expected.items()) for a in made)
         if made and not ok:
             failures.append(f"{tool} 的参数不对：期望 {expected}，实际 {made}")
+
+    if c.get("not_staged") and any(s["tool"] == "request_booking" and s["results"][:1] == ["⏸️ 已暂存，等顾客确认"]
+                                   for s in steps):
+        failures.append("不应该暂存预约（资料还没问清楚），但暂存了")
 
     if "bookings" in c and state["bookings_confirmed"] != c["bookings"]:
         failures.append(f"有效预约应该是 {c['bookings']} 笔，实际 {state['bookings_confirmed']} 笔")

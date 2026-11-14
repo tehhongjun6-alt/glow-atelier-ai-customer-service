@@ -16,11 +16,12 @@ Agent 循环（Agent Loop）是这样运作的：
 这叫 Agentic RAG。第 4–6 步只要在 tools.py 加工具，这个循环不用改。
 """
 
+import logging
 import os
 import re
 import time
 from pathlib import Path
-
+from langfuse import get_client, observe
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
@@ -28,6 +29,7 @@ from google.genai import errors, types
 from agent.actions import ActionGate
 from agent.prompts import CHANNEL_NOTES, SYSTEM_PROMPT
 from agent.tools import TOOL_FUNCTIONS, TOOLS
+from booking import bookings
 from booking import rules
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -65,6 +67,7 @@ class CustomerServiceAgent:
         self.customer_email = customer_email     # 电邮渠道：寄件人地址
         self.current_contents = []               # 这一轮进行中的对话（转人工时存进工单）
 
+    @observe(name="customer-chat", as_type="agent")
     def chat(self, message):
         """处理顾客的一则讯息，返回答案和过程记录。"""
         self.gate.new_turn()   # 顾客每发一则讯息，就是新的一轮
@@ -106,8 +109,8 @@ class CustomerServiceAgent:
 
         self.history = contents
         return {"answer": answer.strip(), "trace": trace, "tokens": tokens}
-
     @staticmethod
+    @observe(name="gemini-call", as_type="generation")
     def _generate(contents, channel_note="", max_attempts=3, max_wait=40):
         """调用 Gemini，遇到暂时性的错误就等一下再试：
         - 429：免费方案每分钟 15 次的限速 → 照 Gemini 建议的秒数等
@@ -116,7 +119,14 @@ class CustomerServiceAgent:
         """
         for attempt in range(1, max_attempts + 1):
             try:
-                return client.models.generate_content(model=MODEL, contents=contents, config=build_config(channel_note))
+                response = client.models.generate_content(model=MODEL, contents=contents, config=build_config(channel_note))
+                # Observability：告诉 Langfuse 这次用了哪个模型、几个 token（@observe 自己不知道）
+                usage = response.usage_metadata
+                get_client().update_current_generation(model=MODEL, usage_details={
+                    "input": (usage.prompt_token_count or 0) if usage else 0,
+                    "output": (usage.candidates_token_count or 0) if usage else 0,
+                })
+                return response
             except errors.APIError as error:
                 if error.code not in (429, 500, 503) or attempt == max_attempts:
                     raise
@@ -128,14 +138,20 @@ class CustomerServiceAgent:
                 print(f"   ⏳ Gemini 返回 {error.code}，等 {wait:.0f} 秒再试（第 {attempt} 次）……")
                 time.sleep(wait)
 
+    @observe(name="run-tool", as_type="tool")
     def _run_tool(self, call):
         function = TOOL_FUNCTIONS.get(call.name)
         if function is None:
             return {"error": f"没有这个工具：{call.name}"}, []
         try:
             return function(self, **(call.args or {}))
-        except Exception as error:   # 工具出错（例如网络断了），告诉模型，让它向顾客说明
-            return {"error": f"工具执行失败：{error}"}, []
+        except Exception as error:
+            # 工具出错（例如网络断了）：真正的原因只写进后端日志；
+            # 交给模型（也就是会被念给顾客）的，只有一句客服该说的话，不带任何内部细节
+            logging.getLogger("glow.agent").exception("工具 %s 执行失败", call.name)
+            # Observability：在 Langfuse 把这一步标成 ERROR，方便筛选出所有出错的工具
+            get_client().update_current_span(level="ERROR", status_message=f"{type(error).__name__}: {error}")
+            return {"error": bookings.SYSTEM_BUSY}, ["❌ 系统出错（详情见后端日志）"]
 
     def transcript(self):
         """把对话整理成文字记录（只留顾客和客服说的话，不含工具调用），转人工时存进工单。"""

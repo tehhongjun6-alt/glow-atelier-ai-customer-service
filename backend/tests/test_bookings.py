@@ -13,6 +13,12 @@ def book(service="男士护理", date=WEDNESDAY, time="15:00", **extra):
     return bookings.create_booking(**CUSTOMER, service=service, date=date, time=time, **extra)
 
 
+def book_as(i, service="男士护理", date=WEDNESDAY, time="15:00", **extra):
+    """用第 i 位顾客订（每人最多 3 笔未来预约，所以测名额时要用不同的人）。"""
+    return bookings.create_booking(customer_name=f"顾客{i}", phone=f"01700000{i:02d}", email=f"c{i}@example.com",
+                                   service=service, date=date, time=time, **extra)
+
+
 def rows(db, table="bookings"):
     return db.tables[table].rows
 
@@ -36,7 +42,7 @@ def test_create_writes_database_and_calendar(db, calendar):
 def test_calendar_failure_rolls_back_database(db, calendar):
     calendar.fail = True
     result = book()
-    assert not result["success"] and "Google Calendar" in result["error"]
+    assert not result["success"] and result["error"] == bookings.SYSTEM_BUSY   # 不带内部细节
     assert rows(db) == []                                  # 数据库那笔被删掉，两边一致
 
 
@@ -50,27 +56,28 @@ def test_rejects_bad_input(db, calendar):
     assert rows(db) == []
 
 
-def test_slot_full_after_six_bookings(db, calendar):
-    for _ in range(6):                                     # 同一时段 6 间房都满了
-        assert book()["success"]
-    full = book()
-    assert not full["success"] and "满" in full["error"]
-    assert book(time="17:00")["success"]                   # 别的时段还可以订
+def test_slot_full_when_no_facial_staff_left(db, calendar):
+    """星期三会做脸的只有陈美玲、张雅婷（林嘉欣星期三不上班）→ 同一时段最多 2 位。"""
+    first, second = book_as(1), book_as(2)
+    assert {first["booking"]["beautician"], second["booking"]["beautician"]} == {"陈美玲", "张雅婷"}
+    full = book_as(3)
+    assert not full["success"] and "都没空" in full["error"]
+    assert book_as(3, time="17:00")["success"]                 # 别的时段还可以订
+    assert book_as(4, service="肩颈舒缓按摩")["success"]        # 身体护理是别的美容师，不受影响
 
 
 def test_cancelled_bookings_do_not_take_a_slot(db, calendar):
-    codes = [book()["booking"]["booking_code"] for _ in range(6)]
-    bookings.cancel_booking(codes[0], CUSTOMER["phone"])
-    assert book()["success"]                               # 取消了一笔，就空出一个位
+    codes = [book_as(i)["booking"]["booking_code"] for i in (1, 2)]
+    bookings.cancel_booking(codes[0], "0170000001")
+    assert book_as(3)["success"]                               # 取消了一笔，就空出一位美容师
 
 
 def test_commit_rechecks_capacity(db, calendar):
-    """顾客在确认的那段时间，别人刚好把最后一个位订走了。"""
+    """顾客在确认的那段时间，别人刚好把最后一位美容师订走了。"""
     row, _ = bookings.prepare_booking(**CUSTOMER, service="男士护理", date=WEDNESDAY, time="15:00")
-    for _ in range(6):
-        book()
+    book_as(1), book_as(2)
     result = bookings.commit_booking(row)
-    assert not result["success"] and "刚刚被订满" in result["error"]
+    assert not result["success"] and "刚刚有人订走了" in result["error"]
 
 
 # ---------- 取消 ----------
@@ -120,22 +127,20 @@ def test_reschedule_checks_rules_and_phone(db, calendar):
 
 
 def test_reschedule_does_not_count_itself(db, calendar):
-    """15:00 满 6 人。其中一人改到 15:30：跟另外 5 人重叠，5 < 6，应该可以。
-    如果代码把这位顾客自己也算进去，就会变成 6，被误判为满。"""
-    codes = [book()["booking"]["booking_code"] for _ in range(6)]
-    assert bookings.reschedule_booking(codes[0], CUSTOMER["phone"], WEDNESDAY, "15:30")["success"] is True
+    """15:00 两位美容师都在忙。其中一位客人改到 15:30：她自己原本占的位子要放出来，不能算她自己。"""
+    code = book_as(1)["booking"]["booking_code"]
+    book_as(2)
+    assert bookings.reschedule_booking(code, "0170000001", WEDNESDAY, "15:30")["success"] is True
 
 
 def test_reschedule_into_full_slot_is_rejected(db, calendar):
     mine = book(time="11:00")["booking"]["booking_code"]
-    for _ in range(6):
-        book(time="17:00")
+    book_as(1, time="17:00"), book_as(2, time="17:00")
     result = bookings.reschedule_booking(mine, CUSTOMER["phone"], WEDNESDAY, "17:00")
-    assert not result["success"] and "满" in result["error"]
+    assert not result["success"] and "都没空" in result["error"]
     assert calendar.updated == []
 
 
-# ---------- 查询 ----------
 def test_find_bookings_only_returns_upcoming_confirmed(db, calendar):
     keep = book()["booking"]["booking_code"]
     gone = book(time="16:00")["booking"]["booking_code"]
@@ -143,5 +148,5 @@ def test_find_bookings_only_returns_upcoming_confirmed(db, calendar):
     book_other = bookings.create_booking(customer_name="别人", phone="0177777777", email="x@example.com",
                                          service="男士护理", date=WEDNESDAY, time="15:00")
     assert book_other["success"]
-    found = bookings.find_bookings("+60 12 888 6666")["bookings"]
+    found = bookings.find_bookings("+60 12 888 6666", CUSTOMER["email"])["bookings"]
     assert [b["booking_code"] for b in found] == [keep]

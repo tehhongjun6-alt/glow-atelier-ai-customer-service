@@ -9,6 +9,11 @@
     python -m pytest -v         显示每一个测试的名字
 """
 
+import os
+
+# 测试不要把 trace 送到 Langfuse（要在 import agent 之前设定）
+os.environ["LANGFUSE_TRACING_ENABLED"] = "false"
+
 import itertools
 from datetime import datetime
 from types import SimpleNamespace
@@ -115,7 +120,8 @@ class FakeTable:
 class FakeSupabase:
     def __init__(self):
         self.tables = {
-            "bookings": FakeTable({"status": "confirmed", "google_event_id": None, "updated_at": NOW.isoformat()}),
+            "bookings": FakeTable({"status": "confirmed", "google_event_id": None, "late_changes": 0,
+                                   "updated_at": NOW.isoformat()}),
             "handoffs": FakeTable({"status": "processing", "conversation": [], "assigned_to": None,
                                    "staff_note": None, "accepted_at": None, "resolved_at": None}),
         }

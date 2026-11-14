@@ -16,6 +16,7 @@ from email.utils import formataddr, parseaddr
 from pathlib import Path
 
 from dotenv import load_dotenv
+from langfuse import observe
 from googleapiclient.discovery import build
 
 from integrations.google_auth import get_credentials
@@ -44,6 +45,7 @@ def company_address():
 
 
 # ---------- 寄信 ----------
+@observe(name="gmail-send")   # Observability：寄信失败时 Langfuse 会自动标成红色 ERROR
 def send_email(to, subject, body, thread_id=None, in_reply_to=None, references=None, kind="notice"):
     """寄一封纯文字信。回信时带上 thread_id 和 In-Reply-To，Gmail 才会把它放在同一个对话里。"""
     msg = EmailMessage()
