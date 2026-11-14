@@ -45,7 +45,8 @@ def fake_inbox(monkeypatch):
     monkeypatch.setattr(w, "start_epoch", lambda: 0)
     monkeypatch.setattr(w, "CustomerServiceAgent", FakeAgent)
     monkeypatch.setattr(w.gmail, "company_address", lambda: COMPANY)
-    monkeypatch.setattr(w.gmail, "search", lambda query, max_results: [m["id"] for m in inbox])
+    monkeypatch.setattr(w.gmail, "search", lambda query, max_results, include_spam=False:
+                        [] if include_spam else [m["id"] for m in inbox])   # 垃圾邮件是空的
     monkeypatch.setattr(w.gmail, "get_message", lambda mid: next(m for m in inbox if m["id"] == mid))
     monkeypatch.setattr(w.handoffs, "open_ticket_for_thread", lambda thread_id: None)
 

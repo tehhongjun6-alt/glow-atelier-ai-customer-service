@@ -8,6 +8,7 @@
 
 import argparse
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -103,11 +104,19 @@ def setup_calendar():
         cal_id = service.calendars().insert(body={"summary": CALENDAR_NAME, "timeZone": TIMEZONE}).execute()["id"]
         print(f"✅ 建立了日历「{CALENDAR_NAME}」")
 
+    # 设成公开（任何人都能看、不能改），网页「预约日历」分页才嵌入得了。资料都是示范用的假资料。
+    service.acl().insert(calendarId=cal_id, body={"role": "reader", "scope": {"type": "default"}}).execute()
+    print("✅ 日历已设成公开（只能看，不能改）")
+
+    # 写进 .env：没有就加上；已经有旧的（例如换了 Google 帐号）就换成新的。日历 ID 不是密钥。
     env_text = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else ""
-    if "GOOGLE_CALENDAR_ID=" not in env_text:
-        with ENV_FILE.open("a", encoding="utf-8") as f:
-            f.write(f"\nGOOGLE_CALENDAR_ID={cal_id}\n")
-        print("✅ 日历 ID 已写进 backend/.env")
+    line = f"GOOGLE_CALENDAR_ID={cal_id}"
+    if re.search(r"^GOOGLE_CALENDAR_ID=.*$", env_text, flags=re.M):
+        env_text = re.sub(r"^GOOGLE_CALENDAR_ID=.*$", lambda _: line, env_text, flags=re.M)
+    else:
+        env_text += f"\n{line}\n"
+    ENV_FILE.write_text(env_text, encoding="utf-8")
+    print("✅ 日历 ID 已写进 backend/.env")
     print(f"日历 ID：{cal_id}")
 
 

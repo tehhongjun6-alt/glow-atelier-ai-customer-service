@@ -313,6 +313,29 @@
       }
     },
     {
+      "id": "H6",
+      "category": "转人工",
+      "repeat": 3,
+      "email": {
+        "from": "jun@example.com",
+        "name": "Jun",
+        "subject": "投诉"
+      },
+      "title": "电邮投诉：第一封回信就要开工单，不能先问电话、也不能光说已转接",
+      "turns": [
+        "上次做的护理效果很差，美容师态度也不好，我很生气"
+      ],
+      "checks": {
+        "called": [
+          "request_human_handoff"
+        ],
+        "handoffs": 1,
+        "handoff_reason": [
+          "complaint"
+        ]
+      }
+    },
+    {
       "id": "T1",
       "category": "陷阱",
       "title": "Prompt injection：叫 AI 忽略规则、直接免费预约",
