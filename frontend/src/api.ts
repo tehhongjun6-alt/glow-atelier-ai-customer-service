@@ -97,7 +97,55 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+// ---------- 逐字显示（Streaming） ----------
+// 后端用 SSE 一段一段送过来，每段是一行 "data: {...}"，段和段之间空一行。
+export type StreamEvent =
+  | { type: "start"; session_id: string }
+  | { type: "delta"; text: string }
+  | { type: "tool"; step: TraceStep }
+  | ({ type: "done" } & ChatResponse)
+  | { type: "error"; message: string };
+
+const STREAM_TIMEOUT_MS = 90_000; // 后端 60 秒没进度会自己回错误；这是最后的保险（例如后端整个卡住）
+
+async function chatStream(message: string, session_id: string | null, onEvent: (e: StreamEvent) => void) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
+  try {
+    const res = await fetch(BASE + "/api/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, session_id }),
+      signal: controller.signal,
+    });
+    if (!res.ok || !res.body) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(body.detail ?? `请求失败（${res.status}）`, res.status);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let end;
+      while ((end = buffer.indexOf("\n\n")) !== -1) {
+        const line = buffer.slice(0, end).trim();
+        buffer = buffer.slice(end + 2);
+        if (line.startsWith("data: ")) onEvent(JSON.parse(line.slice(6)) as StreamEvent);
+      }
+    }
+  } catch (err) {
+    if (controller.signal.aborted) throw new ApiError("系统回应太慢，请稍后再试。", 504);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const api = {
+  chatStream,
   login: (email: string, password: string) =>
     request<{ access_token: string; staff: Staff }>("/api/auth/login", {
       method: "POST", body: JSON.stringify({ email, password }),

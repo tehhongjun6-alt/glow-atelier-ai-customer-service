@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, ApiError, type TraceStep } from "../api";
+import { api, ApiError, type StreamEvent, type TraceStep } from "../api";
 
-type Message =
-  | { role: "customer"; text: string }
-  | { role: "ai"; text: string; trace: TraceStep[]; tokens?: { input: number; output: number } }
-  | { role: "error"; text: string };
+type AiMessage = { role: "ai"; text: string; trace: TraceStep[]; tokens?: { input: number; output: number } };
+type Message = { role: "customer"; text: string } | AiMessage | { role: "error"; text: string };
 
 const SUGGESTIONS = [
   "雾眉多少钱？",
@@ -131,20 +129,38 @@ export default function ChatPanel({
     const message = text.trim();
     if (!message || busy) return;
     setDraft("");
-    setMessages((m) => [...m, { role: "customer", text: message }]);
+    // 先放一个空的 AI 回答，之后收到文字就一段一段接上去（逐字显示）
+    setMessages((m) => [...m, { role: "customer", text: message }, { role: "ai", text: "", trace: [] }]);
     setBusy(true);
+    const updateAi = (change: (ai: AiMessage) => Message) =>
+      setMessages((m) => {
+        const last = m[m.length - 1];
+        return last?.role === "ai" ? [...m.slice(0, -1), change(last)] : m;
+      });
+    const onEvent = (e: StreamEvent) => {
+      if (e.type === "start") {
+        setSessionId(e.session_id);
+        sessionStorage.setItem("glow-session", e.session_id);
+      } else if (e.type === "delta") {
+        updateAi((ai) => ({ ...ai, text: ai.text + e.text }));
+      } else if (e.type === "tool") {
+        // 用工具之前 AI 可能先说了一句"我帮您查一下"，最后的答案会重新写，所以先清掉
+        updateAi((ai) => ({ ...ai, text: "", trace: [...ai.trace, e.step] }));
+      } else if (e.type === "done") {
+        updateAi((ai) => ({ ...ai, text: e.answer, trace: e.trace, tokens: e.tokens }));
+        onToolsUsed(e.trace.map((s) => s.tool));
+      } else if (e.type === "error") {
+        updateAi(() => ({ role: "error", text: e.message }));
+      }
+    };
     try {
-      const res = await api.chat(message, sessionId);
-      setSessionId(res.session_id);
-      sessionStorage.setItem("glow-session", res.session_id);
-      setMessages((m) => [...m, { role: "ai", text: res.answer, trace: res.trace, tokens: res.tokens }]);
-      onToolsUsed(res.trace.map((s) => s.tool));
+      await api.chatStream(message, sessionId, onEvent);
     } catch (err) {
       const text =
         err instanceof ApiError
           ? err.message // 后端说明的原因，例如"讯息发得太快了，请等 30 秒再试"
           : `没有连上后端：${(err as Error).message}。请确认 backend 的 API 正在运行。`;
-      setMessages((m) => [...m, { role: "error", text }]);
+      setMessages((m) => [...m.filter((x, i) => !(i === m.length - 1 && x.role === "ai" && !x.text)), { role: "error", text }]);
     } finally {
       setBusy(false);
     }
@@ -190,9 +206,11 @@ export default function ChatPanel({
           ) : m.role === "ai" ? (
             <div key={i} className="ai-turn">
               <Trace steps={m.trace} answer={m.text} onCite={onCite} />
-              <div className="bubble bubble-ai">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripCitation(m.text)}</ReactMarkdown>
-              </div>
+              {m.text && (
+                <div className="bubble bubble-ai">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripCitation(m.text)}</ReactMarkdown>
+                </div>
+              )}
               {m.tokens && (
                 <span className="tokens">
                   输入 {m.tokens.input.toLocaleString()} tokens，输出 {m.tokens.output.toLocaleString()}
@@ -204,7 +222,7 @@ export default function ChatPanel({
           ),
         )}
 
-        {busy && (
+        {busy && !(messages[messages.length - 1]?.role === "ai" && messages[messages.length - 1].text) && (
           <div className="thinking">
             <span className="dot" />
             <span className="dot" />

@@ -55,6 +55,23 @@ def build_config(channel_note=""):
 FALLBACK_ANSWER = "不好意思，系统暂时没办法回答这个问题，请稍后再试，或直接联系我们的门市同事。"
 
 
+def _stream(contents, channel_note, on_text, state):
+    """逐字模式：Gemini 一边生成，一边把文字片段交给 on_text。
+    全部收完后，拼回和一般模式一样的 response（工具调用、对话历史的写法都不用改）。
+    state["sent"]：有没有文字已经送到顾客画面上（中途出错时，_generate 靠它决定能不能重试）。"""
+    parts, usage = [], None
+    for chunk in client.models.generate_content_stream(model=MODEL, contents=contents, config=build_config(channel_note)):
+        usage = chunk.usage_metadata or usage
+        candidate = chunk.candidates[0] if chunk.candidates else None
+        for part in (candidate.content.parts or []) if candidate and candidate.content else []:
+            parts.append(part)               # 原封不动保留（工具调用的签名 thought_signature 也在里面）
+            if part.text and not part.thought:
+                state["sent"] = True
+                on_text(part.text)
+    candidates = [types.Candidate(content=types.Content(role="model", parts=parts))] if parts else []
+    return types.GenerateContentResponse(candidates=candidates, usage_metadata=usage)
+
+
 class CustomerServiceAgent:
     """一个顾客 = 一个 Agent，记住这位顾客的对话历史。"""
 
@@ -68,8 +85,15 @@ class CustomerServiceAgent:
         self.current_contents = []               # 这一轮进行中的对话（转人工时存进工单）
 
     @observe(name="customer-chat", as_type="agent")
-    def chat(self, message):
-        """处理顾客的一则讯息，返回答案和过程记录。"""
+    def chat(self, message, on_event=None):
+        """处理顾客的一则讯息，返回答案和过程记录。
+
+        on_event：网页聊天的逐字显示（streaming）用。有传进来的话：
+        - Gemini 每产生一小段文字，就调用 on_event({"type": "delta", "text": ...})
+        - 每用完一个工具，就调用 on_event({"type": "tool", "step": ...})
+        电邮和评估不传，照旧一次拿到完整答案。
+        """
+        on_text = (lambda text: on_event({"type": "delta", "text": text})) if on_event else None
         self.gate.new_turn()   # 顾客每发一则讯息，就是新的一轮
         contents = self.history + [types.Content(role="user", parts=[types.Part(text=message)])]
         self.current_contents = contents
@@ -79,7 +103,7 @@ class CustomerServiceAgent:
 
         for _ in range(MAX_STEPS):
             try:
-                response = self._generate(contents, self.channel_note)
+                response = self._generate(contents, self.channel_note, on_text=on_text)
             except errors.APIError as error:
                 trace.append({"tool": "error", "args": {}, "results": [f"{error.code} {error.status}"]})
                 break
@@ -101,6 +125,8 @@ class CustomerServiceAgent:
             for call in calls:
                 result, info = self._run_tool(call)
                 trace.append({"tool": call.name, "args": dict(call.args or {}), "results": info})
+                if on_event:
+                    on_event({"type": "tool", "step": trace[-1]})
                 result_parts.append(types.Part.from_function_response(name=call.name, response=result))
             contents.append(types.Content(role="user", parts=result_parts))
 
@@ -111,15 +137,20 @@ class CustomerServiceAgent:
         return {"answer": answer.strip(), "trace": trace, "tokens": tokens}
     @staticmethod
     @observe(name="gemini-call", as_type="generation")
-    def _generate(contents, channel_note="", max_attempts=3, max_wait=40):
+    def _generate(contents, channel_note="", max_attempts=3, max_wait=40, on_text=None):
         """调用 Gemini，遇到暂时性的错误就等一下再试：
         - 429：免费方案每分钟 15 次的限速 → 照 Gemini 建议的秒数等
         - 500／503：Gemini 服务器太忙 → 等 3 秒、6 秒
         其他错误（例如 400 参数错）重试也没用，直接抛出。
+        on_text：有的话改用逐字模式（stream），每收到一段文字就交给 on_text。
         """
         for attempt in range(1, max_attempts + 1):
+            state = {"sent": False}   # 已经有文字送到顾客画面上了 → 不能重试（不然会重复显示）
             try:
-                response = client.models.generate_content(model=MODEL, contents=contents, config=build_config(channel_note))
+                if on_text:
+                    response = _stream(contents, channel_note, on_text, state)
+                else:
+                    response = client.models.generate_content(model=MODEL, contents=contents, config=build_config(channel_note))
                 # Observability：告诉 Langfuse 这次用了哪个模型、几个 token（@observe 自己不知道）
                 usage = response.usage_metadata
                 get_client().update_current_generation(model=MODEL, usage_details={
@@ -128,7 +159,7 @@ class CustomerServiceAgent:
                 })
                 return response
             except errors.APIError as error:
-                if error.code not in (429, 500, 503) or attempt == max_attempts:
+                if error.code not in (429, 500, 503) or attempt == max_attempts or state["sent"]:
                     raise
                 if error.code == 429:
                     match = re.search(r"retry in ([\d.]+)s", str(error))

@@ -2,6 +2,7 @@
 
 把前面做好的功能包成网址，让 React 前端可以调用：
     POST /api/chat                     和客服 Agent 聊天
+    POST /api/chat/stream              同上，但逐字回传（SSE），网页聊天用这个
     GET  /api/knowledge                知识库原文（Markdown）＋ 切块清单
     GET  /api/bookings                 预约清单（日历用）
     GET  /api/handoffs                 转人工工单清单
@@ -22,7 +23,11 @@
 聊天和知识库是给顾客用的，不用登录。
 """
 
+import json
+import logging
 import os
+import queue
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -31,10 +36,11 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langfuse import propagate_attributes
 from pydantic import BaseModel
 
-from agent.agent import MODEL, CustomerServiceAgent
+from agent.agent import FALLBACK_ANSWER, MODEL, CustomerServiceAgent
 from booking import bookings, calendar_sync, rules
 from email_poller import poller
 from handoff import handoffs
@@ -88,19 +94,75 @@ class ChatRequest(BaseModel):
     message: str
 
 
-@app.post("/api/chat")
-def chat(req: ChatRequest, request: Request):
+def _check_chat(req: ChatRequest, request: Request):
+    """聊天的共同检查：讯息不能空、限流。返回 (讯息, session_id)。"""
     message = req.message.strip()
     if not message:
         raise HTTPException(400, "讯息不能是空的")
     limited = chat_limiter.check(client_ip(request))   # 保护 Gemini 免费额度
     if limited:
         raise HTTPException(429, limited)
-    session_id = req.session_id or uuid.uuid4().hex
+    return message[:2000], req.session_id or uuid.uuid4().hex
+
+
+@app.post("/api/chat")
+def chat(req: ChatRequest, request: Request):
+    """一次拿到完整答案（旧的做法，留着给测试和其他程序用）。网页聊天改用下面的 /api/chat/stream。"""
+    message, session_id = _check_chat(req, request)
     # Observability：这一题的所有记录都贴上 session_id，Langfuse 就能把同一位顾客的多轮对话串起来
     with propagate_attributes(session_id=session_id, tags=["chat"]):
-        result = _get_agent(session_id).chat(message[:2000])
+        result = _get_agent(session_id).chat(message)
     return {"session_id": session_id, "model": MODEL, **result}
+
+
+# ---------- 逐字显示（Streaming） ----------
+# 以前：AI 全部想完、写完才回传，顾客要盯着"思考中"等 5–15 秒。
+# 现在：用 SSE（Server-Sent Events）一边生成一边送：
+#   start → tool（每用一个工具）→ delta（一小段文字，很多次）→ done（完整答案和过程）
+# AI 在另一个线程里跑，产生的事件放进 queue；这里从 queue 拿出来送给浏览器。
+STREAM_IDLE_SECONDS = 60   # 逾时处理：超过这么久没有任何新进度，就告诉顾客系统太慢，不要让画面一直转
+SLOW_ANSWER = "不好意思，系统现在回应比较慢，请稍后再试，或直接联系我们的门市同事。"
+log = logging.getLogger("glow.chat")
+
+
+def _sse(event):
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+@app.post("/api/chat/stream")
+def chat_stream(req: ChatRequest, request: Request):
+    message, session_id = _check_chat(req, request)
+    agent = _get_agent(session_id)
+    events = queue.Queue()
+
+    def work():
+        try:
+            # Observability：线程不会继承外面的设定，所以在线程里面贴 session_id
+            with propagate_attributes(session_id=session_id, tags=["chat"]):
+                result = agent.chat(message, on_event=events.put)
+            events.put({"type": "done", "session_id": session_id, "model": MODEL, **result})
+        except Exception:
+            log.exception("逐字回答出错（session %s）", session_id)
+            events.put({"type": "error", "message": FALLBACK_ANSWER})
+
+    threading.Thread(target=work, name="chat-stream", daemon=True).start()
+
+    def stream():
+        yield _sse({"type": "start", "session_id": session_id})
+        while True:
+            try:
+                event = events.get(timeout=STREAM_IDLE_SECONDS)
+            except queue.Empty:
+                log.warning("逐字回答逾时：%d 秒没有进度（session %s）", STREAM_IDLE_SECONDS, session_id)
+                yield _sse({"type": "error", "message": SLOW_ANSWER})
+                return
+            yield _sse(event)
+            if event["type"] in ("done", "error"):
+                return
+
+    # no-cache / X-Accel-Buffering：叫浏览器和代理服务器不要先存起来，收到一段就马上送出去
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/chat/reset")
