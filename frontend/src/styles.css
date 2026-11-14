@@ -312,3 +312,14 @@ button.ghost:hover { border-color: var(--teal); }
 .switch.is-on .switch-knob { transform: translateX(32px); }
 .switch:disabled { opacity: 0.5; cursor: not-allowed; }
 .email-error { padding: 8px 0 0; font-size: 13.5px; }
+
+/* ---------- 员工登录 ---------- */
+.masthead-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.staff-badge { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--teal-deep); }
+.login-panel { display: flex; flex-direction: column; gap: 12px; max-width: 340px; padding: 24px 20px; }
+.login-title { font-family: var(--serif); font-size: 18px; margin: 0; }
+.login-field { display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; color: var(--ink-soft); }
+.login-field input { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; color: var(--ink); }
+.login-field input:focus { border-color: var(--teal); outline: none; box-shadow: 0 0 0 3px var(--teal-soft); }
+.login-error { padding: 0; font-size: 13.5px; }
+.login-panel button.primary { align-self: flex-start; }

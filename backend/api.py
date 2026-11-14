@@ -16,7 +16,10 @@
     uvicorn api:app --reload --port 8000
 然后打开 http://localhost:8000/docs 可以直接试每一个 API。
 
-⚠️ 这是作品集 demo：后台 API 没有登录保护。正式上线要加员工登录（例如 Supabase Auth）。
+后台 API（预约清单、转人工、邮箱开关）要员工登录才能用（Supabase Auth，见 staff_auth.py）：
+    POST /api/auth/login               员工登录，拿到 token
+    GET  /api/auth/me                  目前登录的是哪位员工
+聊天和知识库是给顾客用的，不用登录。
 """
 
 import os
@@ -25,7 +28,7 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from langfuse import propagate_attributes
 from pydantic import BaseModel
@@ -37,6 +40,7 @@ from handoff import handoffs
 from integrations import google_auth
 from log_setup import setup_logging
 from ratelimit import chat_limiter, client_ip
+from staff_auth import login, require_staff
 from rag.chunker import chunk_file
 from rag.store import supabase
 
@@ -98,6 +102,22 @@ def reset_chat(req: ChatRequest):
     return {"ok": True}
 
 
+# ---------- 员工登录 ----------
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def staff_login(req: LoginRequest):
+    return login(req.email, req.password)
+
+
+@app.get("/api/auth/me")
+def staff_me(staff: dict = Depends(require_staff)):
+    return {"staff": staff}
+
+
 # ---------- 知识库 ----------
 @app.get("/api/knowledge")
 def knowledge():
@@ -110,7 +130,7 @@ def knowledge():
 
 
 # ---------- 预约（日历） ----------
-@app.get("/api/bookings")
+@app.get("/api/bookings", dependencies=[Depends(require_staff)])   # 有顾客电话、邮箱 → 只给员工看
 def list_bookings(days: int = 30, include_cancelled: bool = True):
     start = rules.now().replace(hour=0, minute=0, second=0, microsecond=0)
     query = (
@@ -143,13 +163,13 @@ def _check(result):
     return result["handoff"]
 
 
-@app.get("/api/handoffs")
+@app.get("/api/handoffs", dependencies=[Depends(require_staff)])
 def list_handoffs(status: str | None = None):
     rows = handoffs.list_handoffs(status)
     return {"handoffs": sorted(rows, key=lambda h: h["created_at"], reverse=True)}
 
 
-@app.get("/api/handoffs/{ticket_code}")
+@app.get("/api/handoffs/{ticket_code}", dependencies=[Depends(require_staff)])
 def get_handoff(ticket_code: str):
     row = handoffs.get_handoff(ticket_code)
     if not row:
@@ -157,29 +177,29 @@ def get_handoff(ticket_code: str):
     return {**handoffs.describe(row), "conversation": row["conversation"]}
 
 
-@app.post("/api/handoffs/{ticket_code}/accept")
+@app.post("/api/handoffs/{ticket_code}/accept", dependencies=[Depends(require_staff)])
 def accept_handoff(ticket_code: str, req: AcceptRequest):
     return _check(handoffs.accept(ticket_code, req.staff))
 
 
-@app.post("/api/handoffs/{ticket_code}/resolve")
+@app.post("/api/handoffs/{ticket_code}/resolve", dependencies=[Depends(require_staff)])
 def resolve_handoff(ticket_code: str, req: ResolveRequest):
     return _check(handoffs.resolve(ticket_code, req.note))
 
 
 # ---------- 邮箱（自动回复开关，预设关闭） ----------
-@app.get("/api/email/status")
+@app.get("/api/email/status", dependencies=[Depends(require_staff)])
 def email_status():
     return poller.status()
 
 
-@app.post("/api/email/start")
+@app.post("/api/email/start", dependencies=[Depends(require_staff)])
 def email_start():
     poller.start()
     return poller.status()
 
 
-@app.post("/api/email/stop")
+@app.post("/api/email/stop", dependencies=[Depends(require_staff)])
 def email_stop():
     poller.stop()
     return poller.status()

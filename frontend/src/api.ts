@@ -64,17 +64,45 @@ export class ApiError extends Error {
   }
 }
 
+export type Staff = { email: string; name: string; role: string };
+
+// ---------- 员工登录 ----------
+// token 存在 sessionStorage：关掉分页就要重新登录（比 localStorage 安全一点）
+const TOKEN_KEY = "glow-staff-token";
+let onUnauthorized: () => void = () => {};
+
+export const auth = {
+  token: () => sessionStorage.getItem(TOKEN_KEY),
+  save: (token: string) => sessionStorage.setItem(TOKEN_KEY, token),
+  clear: () => sessionStorage.removeItem(TOKEN_KEY),
+  // token 过期或无效（后端回 401）时要做什么：App 会设成"回到登录画面"
+  onUnauthorized: (handler: () => void) => { onUnauthorized = handler; },
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = auth.token();
   const res = await fetch(BASE + path, {
-    headers: { "Content-Type": "application/json" },
     ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
   });
   const body = await res.json().catch(() => ({}));
+  if (res.status === 401 && token) {
+    auth.clear();
+    onUnauthorized();
+  }
   if (!res.ok) throw new ApiError(body.detail ?? `请求失败（${res.status}）`, res.status);
   return body as T;
 }
 
 export const api = {
+  login: (email: string, password: string) =>
+    request<{ access_token: string; staff: Staff }>("/api/auth/login", {
+      method: "POST", body: JSON.stringify({ email, password }),
+    }),
+  me: () => request<{ staff: Staff }>("/api/auth/me"),
   chat: (message: string, session_id: string | null) =>
     request<ChatResponse>("/api/chat", { method: "POST", body: JSON.stringify({ message, session_id }) }),
   resetChat: (session_id: string | null) =>
