@@ -15,7 +15,7 @@
 防滥用（网站对外开放才会遇到的问题，知识库不会写）：
 - 同一个电话或电邮，最多 MAX_ACTIVE_BOOKINGS 笔未来的预约（防止把时段订满）
 - 姓名、备注不能有网址、特殊符号，有长度上限（防止公开日历和通知信被塞广告、钓鱼连结）
-- 检查名额和写入放在同一把锁里（防止两个人同时订到最后一个位子）
+- 防重复预约由数据库保证（同一位美容师、同一段时间只能有一笔），开多台服务器也安全
 - 通知信每个电邮每天有上限（见 booking/notifications.py）
 """
 
@@ -23,10 +23,10 @@ import logging
 import random
 import re
 import string
-import threading
 from datetime import datetime, timedelta
 
 from langfuse import get_client, observe
+from postgrest.exceptions import APIError
 
 from booking import rules
 from booking.services import (BEAUTICIANS, SERVICE_STAFF, SERVICES, SHOWER_ROOMS, SHOWER_SERVICES,
@@ -46,9 +46,16 @@ MAX_NOTES_LENGTH = 100
 URL_PATTERN = re.compile(r"https?://|www\.|\b[\w-]+\.(com|net|org|my|io|xyz|top|cn|link|info|biz|co|me|ly)\b", re.I)
 SPECIAL_CHARACTERS = re.compile(r"[<>{}\[\]\\|`$]")
 
-# 检查名额 + 写入要在同一把锁里，不然两个人同一瞬间确认最后一个位子，会都订进去。
-# ⚠️ 这把锁只在"一台服务器"有效；如果以后开多台，要改成数据库层的锁。
-_booking_lock = threading.Lock()
+# 防重复预约：交给数据库（sql/007_no_double_booking.sql）
+# 以前用程序里的锁（threading.Lock），但锁只在"一台服务器"有效；开两台就各锁各的，还是会重复。
+# 现在数据库规定"同一位美容师、同一段时间只能有一笔有效预约"，两台服务器同时写，只有一台会成功，
+# 另一台会收到错误代码 23P01 → 重新排一位美容师，或告诉顾客"刚刚被订走了"。
+DOUBLE_BOOKING = "23P01"   # Postgres 的 exclusion_violation
+MAX_PICK_ATTEMPTS = 3
+
+
+def _is_double_booking(error):
+    return isinstance(error, APIError) and error.code == DOUBLE_BOOKING
 
 
 # ---------- 小工具 ----------
@@ -326,27 +333,35 @@ def prepare_booking(customer_name, phone, email, service, date, time, beautician
 
 @observe(name="save-booking")   # Observability：在 Langfuse 步骤树里显示"写数据库 + 写日历"
 def commit_booking(row):
-    """真正写入。写入前在锁里再排一次班（顾客确认的这段时间，别人可能刚好订走了）。"""
+    """真正写入。写入前再排一次班（顾客确认的这段时间，别人可能刚好订走了）。"""
     row = dict(row)
     preferred = row.pop("_preferred", None)
     start, end = _to_local(row["start_at"]), _to_local(row["end_at"])
 
-    with _booking_lock:
+    for _ in range(MAX_PICK_ATTEMPTS):
         assigned, problem = _pick_beautician(row["service"], start, end, preferred=preferred)
         if problem:
             return _error(f"刚刚有人订走了：{problem}")
         row["beautician"] = assigned
         row["booking_code"] = _new_code()
-        # 先写数据库，再写日历；日历失败就把数据库那笔删掉，两边保持一致
-        saved = supabase.table(TABLE).insert(row).execute().data[0]
+        try:
+            # 先写数据库，再写日历；日历失败就把数据库那笔删掉，两边保持一致
+            saved = supabase.table(TABLE).insert(row).execute().data[0]
+            break
+        except APIError as error:
+            if not _is_double_booking(error):
+                raise
+            # 检查完到写入之间，别的服务器刚好订走了这位美容师 → 数据库挡下，重新排一次
+            log.info("美容师 %s 在 %s 刚被订走（数据库挡下），重新排班", assigned, start.strftime("%Y-%m-%d %H:%M"))
+    else:
+        return _error("刚刚有人订走了，这个时段已经满了，请换一个时间")
 
     try:
         event_id = google_calendar.create_event(row)
     except Exception as error:
-        supabase.table(TABLE).delete().eq("id", saved["id"]).execute()
-        log.error("Google Calendar 写入失败（已回滚）：%s", error)
-        get_client().update_current_span(level="ERROR", status_message=f"Google Calendar 写入失败（已回滚）：{error}")
-        return _error(SYSTEM_BUSY)
+        # 数据库已经存好，预约就算成功；日历交给背景程序补做（以前是删掉预约、叫顾客重订）
+        _calendar_failed(saved["id"], "新增", error)
+        return {"success": True, "booking": describe(saved)}
     saved = supabase.table(TABLE).update({"google_event_id": event_id}).eq("id", saved["id"]).execute().data[0]
     return {"success": True, "booking": describe(saved)}
 
@@ -378,9 +393,7 @@ def commit_cancel(row):
         try:
             google_calendar.delete_event(row["google_event_id"])
         except Exception as error:
-            log.error("Google Calendar 删除失败（数据库已取消，日历要手动删除 %s）：%s",
-                      row["google_event_id"], error)
-            get_client().update_current_span(level="ERROR", status_message="日历要手动删除（数据库已取消）")
+            _calendar_failed(row["id"], "删除", error)
     return {"success": True, "booking": describe(updated), "within_24_hours": late}
 
 
@@ -418,24 +431,27 @@ def prepare_reschedule(booking_code, phone, new_date, new_time):
 def commit_reschedule(plan):
     row = plan["row"]
     start, end = _to_local(plan["start_at"]), _to_local(plan["end_at"])
-    with _booking_lock:
-        _, problem = _pick_beautician(row["service"], start, end, row["id"], preferred=plan["beautician"])
-        if problem:
-            return _error(f"刚刚有人订走了：{problem}")
-        changes = {"start_at": plan["start_at"], "end_at": plan["end_at"], "beautician": plan["beautician"],
-                   "updated_at": rules.now().isoformat()}
-        if plan["late"]:
-            changes["late_changes"] = (row.get("late_changes") or 0) + 1
-        old = describe(row)
+    _, problem = _pick_beautician(row["service"], start, end, row["id"], preferred=plan["beautician"])
+    if problem:
+        return _error(f"刚刚有人订走了：{problem}")
+    changes = {"start_at": plan["start_at"], "end_at": plan["end_at"], "beautician": plan["beautician"],
+               "updated_at": rules.now().isoformat()}
+    if plan["late"]:
+        changes["late_changes"] = (row.get("late_changes") or 0) + 1
+    old = describe(row)
+    try:
         updated = supabase.table(TABLE).update(changes).eq("id", row["id"]).execute().data[0]
+    except APIError as error:
+        if not _is_double_booking(error):
+            raise
+        log.info("改期：美容师 %s 在 %s 刚被订走（数据库挡下）", plan["beautician"], start.strftime("%Y-%m-%d %H:%M"))
+        return _error("刚刚有人订走了这个时段，请换一个时间")
 
     if row.get("google_event_id"):
         try:
             google_calendar.update_event_time(row["google_event_id"], plan["start_at"], plan["end_at"])
         except Exception as error:
-            log.error("Google Calendar 更新失败（数据库已改期，日历要手动更新 %s）：%s",
-                      row["google_event_id"], error)
-            get_client().update_current_span(level="ERROR", status_message="日历要手动更新（数据库已改期）")
+            _calendar_failed(row["id"], "改期", error)
     return {"success": True, "old": old, "booking": describe(updated), "within_24_hours": plan["late"]}
 
 
@@ -443,3 +459,56 @@ def reschedule_booking(booking_code, phone, new_date, new_time):
     """一步完成（测试和后台使用）。"""
     plan, error = prepare_reschedule(booking_code, phone, new_date, new_time)
     return error or commit_reschedule(plan)
+
+
+# ---------- 6. 日历自动补做（sql/008_calendar_retry.sql） ----------
+# 数据库是"真正的资料"，Google Calendar 只是给门市看的副本。
+# 日历失败时先标成"待补做"，背景程序（booking/calendar_sync.py）每分钟照数据库的样子补上去。
+CALENDAR_MAX_ATTEMPTS = 10
+
+
+def _calendar_failed(booking_id, action, error):
+    """日历操作失败：记下来等背景程序补做。顾客看到的结果不受影响。"""
+    supabase.table(TABLE).update({"calendar_pending": True, "calendar_error": f"{action}：{error}"[:300]})         .eq("id", booking_id).execute()
+    log.warning("Google Calendar %s失败，已排进自动补做（预约 id %s）：%s", action, booking_id, error)
+    get_client().update_current_span(level="WARNING", status_message=f"日历{action}失败，稍后自动补做")
+
+
+def _sync_one(row):
+    """让日历和数据库一致：有效预约 → 日历要有、时间要对；已取消 → 日历要删掉。"""
+    changes = {"calendar_pending": False, "calendar_attempts": 0, "calendar_error": None}
+    if row["status"] == "confirmed":
+        if row.get("google_event_id"):
+            google_calendar.update_event_time(row["google_event_id"], row["start_at"], row["end_at"])
+        else:
+            changes["google_event_id"] = google_calendar.create_event(row)
+    elif row.get("google_event_id"):
+        try:
+            google_calendar.delete_event(row["google_event_id"])
+        except Exception as error:
+            if getattr(getattr(error, "resp", None), "status", None) not in (404, 410):   # 已经不在日历上 = 已经做好
+                raise
+        changes["google_event_id"] = None
+    supabase.table(TABLE).update(changes).eq("id", row["id"]).execute()
+
+
+def sync_calendar_once():
+    """补做所有"日历待补做"的预约。返回 (成功几笔, 失败几笔)。"""
+    rows = supabase.table(TABLE).select("*").eq("calendar_pending", True).execute().data
+    done = failed = 0
+    for row in rows:
+        if row["calendar_attempts"] >= CALENDAR_MAX_ATTEMPTS:
+            continue                    # 已经放弃，等工程师处理（log 里有 ERROR）
+        try:
+            _sync_one(row)
+            done += 1
+            log.info("日历补做成功：%s", row["booking_code"])
+        except Exception as error:
+            failed += 1
+            attempts = row["calendar_attempts"] + 1
+            supabase.table(TABLE).update({"calendar_attempts": attempts, "calendar_error": str(error)[:300]})                 .eq("id", row["id"]).execute()
+            if attempts >= CALENDAR_MAX_ATTEMPTS:
+                log.error("日历补做失败 %d 次，放弃，需要人工处理：%s（%s）", attempts, row["booking_code"], error)
+            else:
+                log.warning("日历补做失败（第 %d 次），下一轮再试：%s（%s）", attempts, row["booking_code"], error)
+    return done, failed

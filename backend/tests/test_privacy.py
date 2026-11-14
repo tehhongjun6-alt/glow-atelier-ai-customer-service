@@ -62,12 +62,12 @@ def test_email_channel_uses_sender_address(db, calendar):
 
 
 # ---------- 2. 错误讯息不带内部细节 ----------
-def test_calendar_error_is_generic_and_logged(db, calendar, caplog):
+def test_calendar_error_is_not_shown_and_logged(db, calendar, caplog):
     calendar.fail = True
-    with caplog.at_level(logging.ERROR, logger="glow.bookings"):
+    with caplog.at_level(logging.WARNING, logger="glow.bookings"):
         result = bookings.create_booking(**CUSTOMER, service="男士护理", date=WEDNESDAY, time="15:00")
-    assert result["error"] == bookings.SYSTEM_BUSY
-    assert not any(w in result["error"] for w in INTERNAL_WORDS)
+    assert result["success"]                                  # 日历失败不影响顾客（稍后自动补做）
+    assert not any(w in str(result) for w in INTERNAL_WORDS)  # 给 AI 的结果不带内部细节
     assert "Google Calendar 连不上" in caplog.text           # 真正的原因在日志里，工程师看得到
 
 

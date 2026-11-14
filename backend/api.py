@@ -25,6 +25,7 @@
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -34,7 +35,7 @@ from langfuse import propagate_attributes
 from pydantic import BaseModel
 
 from agent.agent import MODEL, CustomerServiceAgent
-from booking import bookings, rules
+from booking import bookings, calendar_sync, rules
 from email_poller import poller
 from handoff import handoffs
 from integrations import google_auth
@@ -50,7 +51,13 @@ SESSION_TTL_SECONDS = 2 * 60 * 60
 
 setup_logging("api.log")   # 统一 log 格式，同时写进 backend/logs/api.log
 
-app = FastAPI(title="Glow Atelier AI 客服 API")
+@asynccontextmanager
+async def lifespan(_app):
+    calendar_sync.start()   # 后端启动时：日历自动补做（每 60 秒把"日历待补做"的预约补到 Google Calendar）
+    yield
+
+
+app = FastAPI(title="Glow Atelier AI 客服 API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],   # Vite 开发服务器

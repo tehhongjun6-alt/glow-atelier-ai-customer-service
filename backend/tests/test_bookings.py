@@ -1,6 +1,6 @@
 """预约功能（booking/bookings.py）：用假的数据库和假的 Google Calendar
 
-重点测"护栏"：手机号码核对、名额、日历失败回滚、prepare 不会写入资料。
+重点测"护栏"：手机号码核对、名额、日历失败改成待补做、prepare 不会写入资料。
 """
 
 from booking import bookings
@@ -39,11 +39,12 @@ def test_create_writes_database_and_calendar(db, calendar):
     assert len(calendar.created) == 1
 
 
-def test_calendar_failure_rolls_back_database(db, calendar):
+def test_calendar_failure_keeps_booking_for_retry(db, calendar):
+    """日历失败不再删掉预约（以前会回滚、叫顾客重订），改成标记"待补做"（见 test_calendar_sync.py）。"""
     calendar.fail = True
     result = book()
-    assert not result["success"] and result["error"] == bookings.SYSTEM_BUSY   # 不带内部细节
-    assert rows(db) == []                                  # 数据库那笔被删掉，两边一致
+    assert result["success"]
+    assert rows(db)[0]["calendar_pending"] and rows(db)[0]["google_event_id"] is None
 
 
 def test_rejects_bad_input(db, calendar):
