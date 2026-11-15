@@ -5,12 +5,12 @@
 输入 exit 离开。
 """
 
-from agent.agent import MODEL, CustomerServiceAgent
+from agent.agent import MODEL, MODELS, CustomerServiceAgent
 
 
 def main():
     agent = CustomerServiceAgent()
-    print(f"Glow Atelier 光研美学 客服（模型：{MODEL}）。输入 exit 离开。\n")
+    print(f"Glow Atelier 光研美学 客服（模型：{MODEL}，额度用完依序换：{'、'.join(MODELS[1:])}）。输入 exit 离开。\n")
 
     while True:
         message = input("你：").strip()

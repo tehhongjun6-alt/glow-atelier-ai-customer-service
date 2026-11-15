@@ -40,7 +40,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from langfuse import propagate_attributes
 from pydantic import BaseModel
 
-from agent.agent import FALLBACK_ANSWER, MODEL, CustomerServiceAgent
+from agent.agent import FALLBACK_ANSWER, MODELS, CustomerServiceAgent, current_model
 from alerts import telegram
 from booking import bookings, calendar_sync, rules
 from email_poller import poller
@@ -113,7 +113,7 @@ def chat(req: ChatRequest, request: Request):
     # Observability：这一题的所有记录都贴上 session_id，Langfuse 就能把同一位顾客的多轮对话串起来
     with propagate_attributes(session_id=session_id, tags=["chat"]):
         result = _get_agent(session_id).chat(message)
-    return {"session_id": session_id, "model": MODEL, **result}
+    return {"session_id": session_id, "model": current_model(), **result}
 
 
 # ---------- 逐字显示（Streaming） ----------
@@ -141,7 +141,7 @@ def chat_stream(req: ChatRequest, request: Request):
             # Observability：线程不会继承外面的设定，所以在线程里面贴 session_id
             with propagate_attributes(session_id=session_id, tags=["chat"]):
                 result = agent.chat(message, on_event=events.put)
-            events.put({"type": "done", "session_id": session_id, "model": MODEL, **result})
+            events.put({"type": "done", "session_id": session_id, "model": current_model(), **result})
         except Exception:
             log.exception("逐字回答出错（session %s）", session_id)
             events.put({"type": "error", "message": FALLBACK_ANSWER})
@@ -292,7 +292,8 @@ def health():
     body = {
         "ok": database,
         "database": database,
-        "model": MODEL,
+        "model": current_model(),        # 现在正在用的模型（额度用完会自动换下一个）
+        "models": MODELS,                # 模型清单（由好到差）
         "time": datetime.now(rules.TIMEZONE).isoformat(),
         "google": google_auth.status(),   # 授权过期时，这里会写出原因和修法
         "alerts": telegram.configured(),  # 有没有接上 Telegram 警报
