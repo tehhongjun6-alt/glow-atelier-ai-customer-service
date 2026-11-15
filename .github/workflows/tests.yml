@@ -1,0 +1,53 @@
+# GitHub Actions：每次 push（或开 Pull Request），GitHub 会开一台全新的电脑，自动跑下面的检查。
+# 结果会显示在 GitHub 的 Actions 分页，和每个 commit 旁边的 ✅ / ❌。
+#
+# 为什么不用设定任何密钥（secret）？
+# 测试全部用假的环境（假的数据库、假的 Google、假的 Gemini，见 backend/tests/conftest.py），
+# 不会连到真的服务。程序启动时会检查有没有 key，所以下面给"假的值"让它能启动就好。
+
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    name: 后端测试（pytest）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      GEMINI_API_KEY: fake-key-for-tests
+      SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SECRET_KEY: fake-key-for-tests
+      GMAIL_COMPANY_ADDRESS: company@example.com
+      LANGFUSE_TRACING_ENABLED: "false"
+      CALENDAR_SYNC: "off"
+      TZ: Asia/Kuala_Lumpur
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+
+  frontend:
+    name: 前端检查（TypeScript + build）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build     # tsc 检查型别 + vite 打包；有错就会失败

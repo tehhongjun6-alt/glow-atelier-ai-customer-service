@@ -9,13 +9,21 @@
     python -m pytest -v         显示每一个测试的名字
 """
 
+import os
+
+# 测试不要把 trace 送到 Langfuse（要在 import agent 之前设定）
+os.environ["LANGFUSE_TRACING_ENABLED"] = "false"
+os.environ["CALENDAR_SYNC"] = "off"   # 测试不开背景的日历补做（不连 Google）
+os.environ["TELEGRAM_BOT_TOKEN"] = ""   # 测试绝不送真的 Telegram（.env 不会覆盖已经设定的值）
+
 import itertools
 from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
+from postgrest.exceptions import APIError
 
-from booking import bookings, notifications, rules
+from booking import bookings, notifications, otp, rules
 from handoff import handoffs
 
 NOW = datetime(2026, 11, 10, 9, 0, tzinfo=rules.TIMEZONE)   # 星期二
@@ -85,9 +93,13 @@ class FakeQuery:
         matched = [r for r in self.table.rows if all(f(r) for f in self.filters)]
         if self.op == "insert":
             rows = self.payload if isinstance(self.payload, list) else [self.payload]
+            for r in rows:
+                self.table.check(r)
             new = [self.table.add(r) for r in rows]
             return SimpleNamespace(data=[dict(r) for r in new])
         if self.op == "update":
+            for r in matched:
+                self.table.check({**r, **self.payload}, exclude=r)
             for r in matched:
                 r.update(self.payload)
             return SimpleNamespace(data=[dict(r) for r in matched])
@@ -101,10 +113,22 @@ class FakeQuery:
 
 
 class FakeTable:
-    def __init__(self, defaults):
+    def __init__(self, defaults, no_double_booking=False):
         self.rows = []
         self.defaults = defaults
         self.ids = itertools.count(1)
+        self.no_double_booking = no_double_booking
+
+    def check(self, row, exclude=None):
+        """模拟 sql/007_no_double_booking.sql：同一位美容师、时间重叠、都是有效预约 → 错误 23P01。"""
+        if not self.no_double_booking or not row.get("beautician") or row.get("status", "confirmed") != "confirmed":
+            return
+        for other in self.rows:
+            if (other is not exclude and other.get("status") == "confirmed"
+                    and other.get("beautician") == row["beautician"]
+                    and _value(other["start_at"]) < _value(row["end_at"])
+                    and _value(row["start_at"]) < _value(other["end_at"])):
+                raise APIError({"code": "23P01", "message": "conflicting key value violates exclusion constraint"})
 
     def add(self, row):
         full = {"id": next(self.ids), "created_at": NOW.isoformat(), **self.defaults, **row}
@@ -115,7 +139,9 @@ class FakeTable:
 class FakeSupabase:
     def __init__(self):
         self.tables = {
-            "bookings": FakeTable({"status": "confirmed", "google_event_id": None, "updated_at": NOW.isoformat()}),
+            "bookings": FakeTable({"status": "confirmed", "google_event_id": None, "late_changes": 0,
+                                   "updated_at": NOW.isoformat(), "calendar_pending": False,
+                                   "calendar_attempts": 0, "calendar_error": None}, no_double_booking=True),
             "handoffs": FakeTable({"status": "processing", "conversation": [], "assigned_to": None,
                                    "staff_note": None, "accepted_at": None, "resolved_at": None}),
         }
@@ -142,7 +168,7 @@ def db(monkeypatch):
 
 @pytest.fixture
 def calendar(monkeypatch):
-    """假的 Google Calendar。calendar.fail = True 会让下一次调用失败。"""
+    """假的 Google Calendar。calendar.fail = True 时，新增／改期／删除都会失败（直到改回 False）。"""
     log = SimpleNamespace(created=[], updated=[], deleted=[], fail=False)
 
     def create_event(row):
@@ -152,9 +178,13 @@ def calendar(monkeypatch):
         return f"event-{len(log.created)}"
 
     def update_event_time(event_id, start_at, end_at):
+        if log.fail:
+            raise RuntimeError("Google Calendar 连不上")
         log.updated.append((event_id, start_at, end_at))
 
     def delete_event(event_id):
+        if log.fail:
+            raise RuntimeError("Google Calendar 连不上")
         log.deleted.append(event_id)
 
     monkeypatch.setattr(bookings.google_calendar, "create_event", create_event)
@@ -165,8 +195,13 @@ def calendar(monkeypatch):
 
 @pytest.fixture
 def emails(monkeypatch):
-    """假的寄信。emails.fail = True 会让寄信失败。"""
-    log = SimpleNamespace(sent=[], fail=False)
+    """假的寄信。emails.fail = True 会让寄信失败。验证码会记在 emails.otp_codes（最新的在最后）。"""
+    log = SimpleNamespace(sent=[], fail=False, otp_codes=[], otp_fail=False)
+
+    def send_otp(address, code):
+        if log.otp_fail:
+            raise RuntimeError("Gmail 连不上")
+        log.otp_codes.append(code)
 
     def send_for(kind, result):
         if log.fail:
@@ -175,6 +210,8 @@ def emails(monkeypatch):
         return True, None
 
     monkeypatch.setattr(notifications, "send_for", send_for)
+    monkeypatch.setattr(otp, "_send", send_otp)
+    monkeypatch.setattr(notifications, "_sent_today", notifications.defaultdict(int))   # 每个测试的寄信上限重新算
     return log
 
 

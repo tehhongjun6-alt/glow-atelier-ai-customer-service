@@ -13,10 +13,13 @@
    返回 (给模型看的结果, 给 trace 记录的简短说明)
 """
 
+import logging
+import re
+
 from google.genai import types
 
-from booking import bookings
-from booking.services import SERVICES
+from booking import bookings, otp
+from booking.services import BEAUTICIANS, SERVICES
 from handoff import handoffs
 from rag.search import hybrid_search
 
@@ -53,13 +56,22 @@ DECLARATIONS = [
     ),
     types.FunctionDeclaration(
         name="check_availability",
-        description="查某一天某项服务还有哪些时间可以预约。顾客想预约或改期时，先用这个查空档。",
-        parameters_json_schema=_schema({"service": SERVICE, "date": DATE}, ["service", "date"]),
+        description="查某一天某项服务还有哪些时间可以预约（会考虑美容师有没有上班、有没有空）。顾客想预约或改期时，先用这个查空档。",
+        parameters_json_schema=_schema({
+            "service": SERVICE, "date": DATE,
+            "beautician": {"type": "string", "description": "顾客指定的美容师（没指定就不要填）"},
+        }, ["service", "date"]),
     ),
     types.FunctionDeclaration(
         name="find_bookings",
-        description="用手机号码查顾客接下来的预约。顾客想取消或改期、但不记得预约编号时使用。",
-        parameters_json_schema=_schema({"phone": PHONE}, ["phone"]),
+        description=(
+            "顾客想取消或改期、但不记得预约编号时，查他接下来的预约。"
+            "电话和电邮都要和预约时登记的一样才查得到；电邮渠道可以不填电邮，会自动用寄件人地址。"
+        ),
+        parameters_json_schema=_schema(
+            {"phone": PHONE, "email": {"type": "string", "description": "顾客预约时登记的电邮"}},
+            ["phone"],
+        ),
     ),
     types.FunctionDeclaration(
         name="request_booking",
@@ -71,18 +83,19 @@ DECLARATIONS = [
             "service": SERVICE,
             "date": DATE,
             "time": TIME,
-            "beautician": {"type": "string", "description": "指定的美容师名字（顾客没指定就不要填）"},
-            "notes": {"type": "string", "description": "备注，例如过敏、怀孕周数、第一次来（没有就不要填）"},
+            "beautician": {"type": "string", "description": "指定的美容师（顾客没指定就不要填）：" + "、".join(BEAUTICIANS)},
+            "notes": {"type": "string", "description": "备注，例如过敏、第一次来（没有就不要填）"},
+            "pregnancy_weeks": {"type": "integer", "description": "顾客怀孕几周。顾客提到怀孕就一定要问清楚并填上；没怀孕就不要填"},
         }, ["customer_name", "phone", "email", "service", "date", "time"]),
     ),
     types.FunctionDeclaration(
         name="request_cancel",
-        description="准备取消一笔预约（核对预约编号和手机号码）。" + CONFIRM_NOTE,
+        description="准备取消一笔预约（核对预约编号和手机号码，并寄验证码到预约登记的电邮）。" + CONFIRM_NOTE,
         parameters_json_schema=_schema({"booking_code": CODE, "phone": PHONE}, ["booking_code", "phone"]),
     ),
     types.FunctionDeclaration(
         name="request_reschedule",
-        description="准备把预约改到新的日期和时间（核对资料、检查新时段）。" + CONFIRM_NOTE,
+        description="准备把预约改到新的日期和时间（核对资料、检查新时段，并寄验证码到预约登记的电邮）。" + CONFIRM_NOTE,
         parameters_json_schema=_schema(
             {"booking_code": CODE, "phone": PHONE, "new_date": DATE, "new_time": TIME},
             ["booking_code", "phone", "new_date", "new_time"],
@@ -110,7 +123,9 @@ DECLARATIONS = [
     types.FunctionDeclaration(
         name="confirm_action",
         description="顾客已经在最新一则讯息明确同意之后，执行刚才暂存的预约／取消／改期。",
-        parameters_json_schema=_schema({}, []),
+        parameters_json_schema=_schema({
+            "otp_code": {"type": "string", "description": "取消或改期时必填：顾客从电邮收到的 6 位数验证码（新预约不用填）"},
+        }, []),
     ),
 ]
 
@@ -137,6 +152,8 @@ def _short(result):
     if not result.get("success"):
         return [f"❌ {result.get('error')}"]
     if result.get("status") == "waiting_for_customer_confirmation":
+        if result.get("otp_sent_to"):
+            return [f"⏸️ 已暂存，验证码寄到 {result['otp_sent_to']}，等顾客确认"]
         return ["⏸️ 已暂存，等顾客确认"]
     if "booking" in result:
         b = result["booking"]
@@ -146,17 +163,63 @@ def _short(result):
     return [f"✅ 找到 {len(result.get('bookings', []))} 笔预约"]
 
 
-def check_availability(agent, service, date):
-    result = bookings.check_availability(service, date)
+def check_availability(agent, service, date, beautician=None):
+    result = bookings.check_availability(service, date, beautician)
     return result, _short(result)
 
 
-def find_bookings(agent, phone):
-    result = bookings.find_bookings(phone)
+def find_bookings(agent, phone, email=None):
+    email = email or agent.customer_email   # 电邮渠道：寄件人地址就是顾客的电邮
+    if not email:
+        result = {"success": False, "error": "还需要顾客预约时登记的电邮，电话和电邮都对才能查预约。"}
+        return result, _short(result)
+    result = bookings.find_bookings(phone, email)
     return result, _short(result)
+
+
+CN_NUMBERS = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+WEEKS_SAID = re.compile(r"(\d{1,2}|[一两二三四五六七八九十]{1,2})\s*(周|個?星期|weeks?|wks?|minggu)", re.I)
+MONTHS_SAID = re.compile(r"(\d{1,2}|[一两二三四五六七八九十]{1,2})\s*(个月|個月|月|months?|bulan)", re.I)
+
+
+def _to_int(text):
+    if text.isdigit():
+        return int(text)
+    if text.startswith("十"):                      # 十、十二
+        return 10 + CN_NUMBERS.get(text[1:], 0)
+    if len(text) == 2 and text[1] == "十":         # 二十 → 不会出现在周数里，保守处理
+        return CN_NUMBERS[text[0]] * 10
+    return CN_NUMBERS.get(text[0], 0)
+
+
+def weeks_stated_by_customer(text, weeks):
+    """AI 填的怀孕周数，是不是顾客自己说过的（"20 周"、"五个月"、"20 weeks"、"5 bulan"都算）。
+    说月份的话，换算成周数允许一点误差：5 个月 = 20–24 周。"""
+    if any(_to_int(m.group(1)) == weeks for m in WEEKS_SAID.finditer(text)):
+        return True
+    return any(4 * _to_int(m.group(1)) <= weeks <= 4 * _to_int(m.group(1)) + 4 for m in MONTHS_SAID.finditer(text))
+
+
+# 对话里出现这些字，就当作顾客可能怀孕（中文、英文、马来文）
+PREGNANCY_WORDS = re.compile(r"怀孕|孕妇|有身孕|大肚|pregnan|preggy|mengandung|hamil", re.I)
 
 
 def request_booking(agent, **kwargs):
+    # 硬护栏：顾客在对话里提过怀孕，AI 却没填怀孕周数 → 不让它暂存，先回去问清楚。
+    # 不靠 AI 自己记得：怀孕不能做的项目有健康风险。
+    transcript = getattr(agent, "transcript", lambda: [])()
+    customer_text = " ".join(line["text"] for line in transcript if line["role"] == "customer")
+    weeks = kwargs.get("pregnancy_weeks")
+    if PREGNANCY_WORDS.search(customer_text) or weeks:
+        if not weeks:
+            result = {"success": False, "error": "顾客提到怀孕：请先问清楚怀孕几周，再填 pregnancy_weeks 重新暂存。"}
+            return result, _short(result)
+        # 测试时 AI 真的自己编了"16 周"：周数必须是顾客自己说过的，不能推测
+        if not weeks_stated_by_customer(customer_text, int(weeks)):
+            result = {"success": False,
+                      "error": "顾客还没有亲口说怀孕几周（或说的和填的对不上）。请直接问顾客，不能自己推测。"}
+            return result, _short(result)
+
     row, error = bookings.prepare_booking(**kwargs)
     result = error or agent.gate.stage("booking", row, bookings.describe(row))
     return result, _short(result)
@@ -168,8 +231,7 @@ def request_cancel(agent, booking_code, phone):
         return error, _short(error)
     summary = {**bookings.describe(row), "within_24_hours": bookings.rules.hours_until(
         bookings._to_local(row["start_at"])) < 24}
-    result = agent.gate.stage("cancel", row, summary)
-    return result, _short(result)
+    return _stage_with_otp(agent, "cancel", row, summary, row["email"])
 
 
 def request_reschedule(agent, booking_code, phone, new_date, new_time):
@@ -179,12 +241,23 @@ def request_reschedule(agent, booking_code, phone, new_date, new_time):
     new = bookings.describe({**plan["row"], "start_at": plan["start_at"], "end_at": plan["end_at"]})
     summary = {"old": bookings.describe(plan["row"]), "new": new,
                "within_24_hours": bookings.rules.hours_until(bookings._to_local(plan["row"]["start_at"])) < 24}
-    result = agent.gate.stage("reschedule", plan, summary)
+    return _stage_with_otp(agent, "reschedule", plan, summary, plan["row"]["email"])
+
+
+def _stage_with_otp(agent, kind, payload, summary, email):
+    """改期／取消：寄验证码到预约登记的电邮，再暂存等顾客确认。寄不出去就不暂存。"""
+    record, error = otp.issue(email)
+    if error:
+        logging.getLogger("glow.actions").error("验证码寄送失败：%s", error)
+        result = {"success": False, "needs_staff": True,
+                  "error": "验证码暂时寄不出去，没办法在线上改期或取消。请提议帮顾客转给门市同事。"}
+        return result, _short(result)
+    result = agent.gate.stage(kind, payload, summary, otp_record=record, otp_sent_to=bookings._mask_email(email))
     return result, _short(result)
 
 
-def confirm_action(agent):
-    result = agent.gate.confirm()
+def confirm_action(agent, otp_code=None):
+    result = agent.gate.confirm(otp_code)
     return result, _short(result)
 
 

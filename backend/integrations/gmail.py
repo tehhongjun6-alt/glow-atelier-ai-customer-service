@@ -1,10 +1,10 @@
 """Gmail：寄信、读信、回信、加标签
 
-这个项目用的是个人邮箱，所以安全规则很严格（见 email_worker.py）：
-只处理寄到 GMAIL_COMPANY_ADDRESS（例如 tehhongjun6+glow@gmail.com）的新信，其他信一律不碰。
+公司有自己的专用 Gmail 帐号（Gmail 和预约日历都在这个帐号），不再使用任何人的私人信箱。
+安全规则照样很严格（见 email_worker.py）：只处理寄到 GMAIL_COMPANY_ADDRESS 的新信。
 
-Gmail 的"+ 别名"：寄到 名字+任何字@gmail.com 的信，都会收进 名字@gmail.com，
-但信件的 Delivered-To 会保留 +glow，所以程序分得出哪些是"公司"的信。
+（以前用私人信箱时，靠 Gmail 的"+ 别名"例如 名字+glow@gmail.com 区分公司的信；
+ 现在换成专用帐号，GMAIL_COMPANY_ADDRESS 直接填公司信箱就好，也还是可以用 + 别名。）
 """
 
 import base64
@@ -16,6 +16,7 @@ from email.utils import formataddr, parseaddr
 from pathlib import Path
 
 from dotenv import load_dotenv
+from langfuse import observe
 from googleapiclient.discovery import build
 
 from integrations.google_auth import get_credentials
@@ -36,14 +37,15 @@ def get_service():
 
 
 def company_address():
-    """公司收信地址（+ 别名）。顾客回信会寄到这里。"""
+    """公司收信地址。顾客回信会寄到这里，邮件程序也只处理寄到这个地址的信。"""
     value = os.getenv("GMAIL_COMPANY_ADDRESS", "").strip()
-    if "+" not in value:
-        raise RuntimeError("请在 backend/.env 设定 GMAIL_COMPANY_ADDRESS，例如 tehhongjun6+glow@gmail.com")
+    if "@" not in value:
+        raise RuntimeError("请在 backend/.env 设定 GMAIL_COMPANY_ADDRESS（公司专用 Gmail，例如 glowatelier.demo@gmail.com）")
     return value
 
 
 # ---------- 寄信 ----------
+@observe(name="gmail-send")   # Observability：寄信失败时 Langfuse 会自动标成红色 ERROR
 def send_email(to, subject, body, thread_id=None, in_reply_to=None, references=None, kind="notice"):
     """寄一封纯文字信。回信时带上 thread_id 和 In-Reply-To，Gmail 才会把它放在同一个对话里。"""
     msg = EmailMessage()
@@ -65,8 +67,10 @@ def send_email(to, subject, body, thread_id=None, in_reply_to=None, references=N
 
 
 # ---------- 读信 ----------
-def search(query, max_results=10):
-    result = get_service().users().messages().list(userId="me", q=query, maxResults=max_results).execute()
+def search(query, max_results=10, include_spam=False):
+    """include_spam=True 才搜得到垃圾邮件（Gmail API 预设不搜垃圾邮件和垃圾桶）。"""
+    result = get_service().users().messages().list(
+        userId="me", q=query, maxResults=max_results, includeSpamTrash=include_spam).execute()
     return [m["id"] for m in result.get("messages", [])]
 
 

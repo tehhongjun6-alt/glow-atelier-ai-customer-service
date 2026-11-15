@@ -8,9 +8,11 @@
 
 import argparse
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
+from langfuse import observe
 from googleapiclient.discovery import build
 
 from integrations.google_auth import get_credentials
@@ -60,6 +62,8 @@ def _event_body(booking):
     }
 
 
+# Observability：每次写日历都是一个步骤；出错（抛出例外）时 Langfuse 会自动标成红色 ERROR
+@observe(name="google-calendar-create")
 def create_event(booking):
     """新增活动，返回活动 ID。不邀请顾客（确认信由第 5 步用 Gmail 发）。"""
     event = get_service().events().insert(
@@ -68,6 +72,7 @@ def create_event(booking):
     return event["id"]
 
 
+@observe(name="google-calendar-update")
 def update_event_time(event_id, start_at, end_at):
     """改期：只改开始和结束时间。"""
     get_service().events().patch(
@@ -81,6 +86,7 @@ def update_event_time(event_id, start_at, end_at):
     ).execute()
 
 
+@observe(name="google-calendar-delete")
 def delete_event(event_id):
     """取消：从日历删除活动（数据库里的记录会保留，状态改成 cancelled）。"""
     get_service().events().delete(calendarId=calendar_id(), eventId=event_id, sendUpdates="none").execute()
@@ -98,11 +104,19 @@ def setup_calendar():
         cal_id = service.calendars().insert(body={"summary": CALENDAR_NAME, "timeZone": TIMEZONE}).execute()["id"]
         print(f"✅ 建立了日历「{CALENDAR_NAME}」")
 
+    # 设成公开（任何人都能看、不能改），网页「预约日历」分页才嵌入得了。资料都是示范用的假资料。
+    service.acl().insert(calendarId=cal_id, body={"role": "reader", "scope": {"type": "default"}}).execute()
+    print("✅ 日历已设成公开（只能看，不能改）")
+
+    # 写进 .env：没有就加上；已经有旧的（例如换了 Google 帐号）就换成新的。日历 ID 不是密钥。
     env_text = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else ""
-    if "GOOGLE_CALENDAR_ID=" not in env_text:
-        with ENV_FILE.open("a", encoding="utf-8") as f:
-            f.write(f"\nGOOGLE_CALENDAR_ID={cal_id}\n")
-        print("✅ 日历 ID 已写进 backend/.env")
+    line = f"GOOGLE_CALENDAR_ID={cal_id}"
+    if re.search(r"^GOOGLE_CALENDAR_ID=.*$", env_text, flags=re.M):
+        env_text = re.sub(r"^GOOGLE_CALENDAR_ID=.*$", lambda _: line, env_text, flags=re.M)
+    else:
+        env_text += f"\n{line}\n"
+    ENV_FILE.write_text(env_text, encoding="utf-8")
+    print("✅ 日历 ID 已写进 backend/.env")
     print(f"日历 ID：{cal_id}")
 
 
