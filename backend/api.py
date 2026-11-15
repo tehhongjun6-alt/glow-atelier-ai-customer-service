@@ -14,8 +14,8 @@
     POST /api/email/stop               关闭
 
 用法（在 backend 资料夹里）：
-    uvicorn api:app --reload --port 8000
-然后打开 http://localhost:8000/docs 可以直接试每一个 API。
+    uvicorn api:app --reload --port 8010
+然后打开 http://localhost:8010/docs 可以直接试每一个 API。
 
 后台 API（预约清单、转人工、邮箱开关）要员工登录才能用（Supabase Auth，见 staff_auth.py）：
     POST /api/auth/login               员工登录，拿到 token
@@ -67,7 +67,7 @@ async def lifespan(_app):
 app = FastAPI(title="Glow Atelier AI 客服 API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],   # Vite 开发服务器
+    allow_origins=["http://localhost:5180", "http://127.0.0.1:5180"],   # Vite 开发服务器
     allow_methods=["*"],
     allow_headers=["*"],
 )
