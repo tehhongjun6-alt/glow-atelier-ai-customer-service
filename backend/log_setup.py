@@ -23,7 +23,7 @@ DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 def setup_logging(filename, level=logging.INFO):
     if logging.getLogger().handlers:   # 已经设定过（例如被 import 第二次），不要重复加
         return
-    LOG_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)   # 全新的电脑（例如 GitHub Actions）上可能连上层资料夹都没有
     # 文件超过 1 MB 就换新的，最多留 3 个旧档，避免越积越大
     file_handler = RotatingFileHandler(LOG_DIR / filename, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
     logging.basicConfig(
