@@ -14,6 +14,7 @@ import os
 # 测试不要把 trace 送到 Langfuse（要在 import agent 之前设定）
 os.environ["LANGFUSE_TRACING_ENABLED"] = "false"
 os.environ["CALENDAR_SYNC"] = "off"   # 测试不开背景的日历补做（不连 Google）
+os.environ["TELEGRAM_BOT_TOKEN"] = ""   # 测试绝不送真的 Telegram（.env 不会覆盖已经设定的值）
 
 import itertools
 from datetime import datetime

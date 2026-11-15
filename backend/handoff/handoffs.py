@@ -12,6 +12,7 @@ import random
 import string
 from datetime import datetime
 
+from alerts import telegram
 from booking import rules
 from rag.store import supabase
 
@@ -93,7 +94,22 @@ def create_handoff(channel, reason, summary, contact, customer_name=None, bookin
         "conversation": conversation or [],
     }
     saved = supabase.table(TABLE).insert(row).execute().data[0]
-    return {"success": True, "handoff": describe(saved)}
+    handoff = describe(saved)
+    notify_staff(handoff)
+    return {"success": True, "handoff": handoff}
+
+
+def notify_staff(h):
+    """新工单 → 马上通知值班同事的 Telegram（电话、电邮会遮蔽；没设定 Telegram 就不送）。"""
+    channel = "网页聊天" if h["channel"] == "chat" else "电邮"
+    who = f"{h['customer_name']}（{h['contact']}）" if h.get("customer_name") else h["contact"]
+    telegram.send("\n".join([
+        f"🙋 新的转人工工单 {h['ticket_code']}",
+        f"原因：{h['reason_name']}｜渠道：{channel}",
+        f"顾客：{who}",
+        f"摘要：{h['summary'][:200]}",
+        "请到「转人工后台」按「接受」处理",
+    ]))
 
 
 # ---------- 查询（后台、电邮程序用） ----------

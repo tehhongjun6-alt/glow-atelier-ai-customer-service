@@ -36,11 +36,12 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langfuse import propagate_attributes
 from pydantic import BaseModel
 
 from agent.agent import FALLBACK_ANSWER, MODEL, CustomerServiceAgent
+from alerts import telegram
 from booking import bookings, calendar_sync, rules
 from email_poller import poller
 from handoff import handoffs
@@ -122,7 +123,7 @@ def chat(req: ChatRequest, request: Request):
 # AI 在另一个线程里跑，产生的事件放进 queue；这里从 queue 拿出来送给浏览器。
 STREAM_IDLE_SECONDS = 60   # 逾时处理：超过这么久没有任何新进度，就告诉顾客系统太慢，不要让画面一直转
 SLOW_ANSWER = "不好意思，系统现在回应比较慢，请稍后再试，或直接联系我们的门市同事。"
-log = logging.getLogger("glow.chat")
+log = logging.getLogger("glow.api")
 
 
 def _sse(event):
@@ -274,11 +275,26 @@ def email_stop():
     return poller.status()
 
 
+def _database_ok():
+    try:
+        supabase.table("bookings").select("id").limit(1).execute()
+        return True
+    except Exception:
+        log.exception("健康检查：数据库连不上")
+        return False
+
+
 @app.get("/api/health")
 def health():
-    return {
-        "ok": True,
+    """健康检查：给 uptime 监控（例如 UptimeRobot）每分钟来问一次。
+    数据库连不上 → 回 503，监控就会通知"网站出问题了"；只有 Google 授权过期 → 还是 200（聊天照样能用），但写出原因。"""
+    database = _database_ok()
+    body = {
+        "ok": database,
+        "database": database,
         "model": MODEL,
         "time": datetime.now(rules.TIMEZONE).isoformat(),
         "google": google_auth.status(),   # 授权过期时，这里会写出原因和修法
+        "alerts": telegram.configured(),  # 有没有接上 Telegram 警报
     }
+    return body if database else JSONResponse(body, status_code=503)
