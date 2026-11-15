@@ -1,6 +1,6 @@
 // 和后端 FastAPI（backend/api.py）沟通的函数
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8010";
 
 export type TraceStep = { tool: string; args: Record<string, unknown>; results: string[] };
 

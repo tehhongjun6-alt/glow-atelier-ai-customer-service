@@ -107,16 +107,16 @@ AI Customer Service/
 
 **后端 API**（项目最外层）：
 ```
-.venv\Scripts\python -m uvicorn api:app --app-dir backend --port 8000
+.venv\Scripts\python -m uvicorn api:app --app-dir backend --port 8010
 ```
-打开 http://localhost:8000/docs 可以直接试每个 API。
+打开 http://localhost:8010/docs 可以直接试每个 API。
 
 **前端**（另开一个终端，项目最外层）：
 ```
 npm --prefix frontend install
 npm --prefix frontend run dev
 ```
-打开 http://localhost:5173
+打开 http://localhost:5180
 
 **自动测试**（在 `backend` 资料夹里，离线、免费，约 1 秒）：
 ```
